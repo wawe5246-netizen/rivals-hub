@@ -923,8 +923,11 @@ local function isVisible(p)
     return result == nil or result.Instance:IsDescendantOf(getChar(p))
 end
 
+local PRED_FACTOR = 0.07  -- lead multiplier, tune ikut ping
+
 local function getBest()
     local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+    -- guna CFG.fovRadius supaya slider FOV dalam UI affect aimbot
     local bestD, bestP = CFG.fovRadius, nil
     for _, p in ipairs(Players:GetPlayers()) do
         if p == LP or not isEnemy(p) then continue end
@@ -935,10 +938,14 @@ local function getBest()
         local humHp = 0; pcall(function() humHp = hum.Health end)
         if humHp <= 0 then continue end
         if CFG.requireVisible and not isVisible(p) then continue end
-        local sp, on, depth = w2s(part.Position)
+        -- predict position ikut velocity
+        local root = getRoot(p)
+        local vel  = root and root.AssemblyLinearVelocity or Vector3.zero
+        local pred = part.Position + vel * PRED_FACTOR
+        local sp, on, depth = w2s(pred)
         if not on or depth < 0 then continue end
         local dist = (Vector2.new(sp.X, sp.Y) - center).Magnitude
-        if dist < bestD then bestD = dist; bestP = { part = part, pos = part.Position } end
+        if dist < bestD then bestD = dist; bestP = { part = part, pos = pred } end
     end
     return bestP
 end
@@ -968,7 +975,9 @@ local function doAimbot()
                 Camera.CameraType = Enum.CameraType.Scriptable
                 aimbotActive      = true
             end
-            local smooth = math.clamp(1 - CFG.smoothness, 0.01, 1)
+            -- smoothness slider: 0 = instant, 1 = slowest
+            -- lerp factor = 1 - smoothness, clamped supaya tak freeze
+            local smooth = math.clamp(1 - CFG.smoothness, 0.05, 1)
             local targetPos = t.pos
 
             -- 1) redirect camera
@@ -1086,6 +1095,17 @@ UserInputService.InputBegan:Connect(function(inp, gpe)
     if bindMatches(BINDS.aimbotToggle, inp) then
         CFG.aimbot = not CFG.aimbot
         fovCircle.Visible = CFG.showFOV and CFG.aimbot
+        -- restore muzzle CFrames bila toggle off supaya weapon balik normal
+        if not CFG.aimbot then
+            for att, cf in pairs(_muzzleStored) do
+                pcall(function() att.CFrame = cf end)
+            end
+            _muzzleStored = {}
+            if aimbotActive then
+                Camera.CameraType = Enum.CameraType.Custom
+                aimbotActive = false
+            end
+        end
     end
     if bindMatches(BINDS.misc, inp) then
         miscOn = not miscOn
