@@ -812,18 +812,30 @@ local function getHead(p)
     return c and (c:FindFirstChild("HitboxHead") or c:FindFirstChild("Head"))
 end
 
+-- colours: enemy = red, teammate = blue
+local ESP_ENEMY_FILL    = Color3.fromRGB(220, 40,  40)
+local ESP_ENEMY_OUTLINE = Color3.fromRGB(255, 100, 100)
+local ESP_TEAM_FILL     = Color3.fromRGB(40,  100, 220)
+local ESP_TEAM_OUTLINE  = Color3.fromRGB(100, 160, 255)
+local ESP_ENEMY_NAME    = Color3.fromRGB(255, 80,  80)
+local ESP_TEAM_NAME     = Color3.fromRGB(80,  160, 255)
+
 local function applyHL(p)
     local c = getChar(p); if not c then return end
-    if c:FindFirstChild(HL_NAME) then return end
-    local h = Instance.new("Highlight")
-    h.Name              = HL_NAME
-    h.Adornee           = c
-    h.DepthMode         = Enum.HighlightDepthMode.AlwaysOnTop
-    h.FillColor         = Color3.fromRGB(255, 40, 40)
-    h.FillTransparency  = 0.5
-    h.OutlineColor      = Color3.fromRGB(255, 200, 255)
+    -- kalau dah ada, update colour je (team boleh tukar mid-game)
+    local h = c:FindFirstChild(HL_NAME)
+    if not h then
+        h = Instance.new("Highlight")
+        h.Name    = HL_NAME
+        h.Adornee = c
+        h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        h.Parent  = c
+    end
+    local enemy = isEnemy(p)
+    h.FillColor           = enemy and ESP_ENEMY_FILL    or ESP_TEAM_FILL
+    h.FillTransparency    = 0.5
+    h.OutlineColor        = enemy and ESP_ENEMY_OUTLINE or ESP_TEAM_OUTLINE
     h.OutlineTransparency = 0
-    h.Parent            = c
 end
 local function removeHL(p)
     local c = getChar(p); if not c then return end
@@ -872,6 +884,7 @@ local function updateDrawESP()
             d.name.Position = Vector2.new(sp.X, sp.Y - sz*1.7)
             d.name.Text     = p.Name
             d.name.Size     = sz
+            d.name.Color    = isEnemy(p) and ESP_ENEMY_NAME or ESP_TEAM_NAME
             d.name.Visible  = true
         else d.name.Visible = false end
         if CFG.healthESP then
@@ -894,8 +907,12 @@ end
 local function syncHL()
     for _, p in ipairs(Players:GetPlayers()) do
         if p == LP then continue end
-        if CFG.highlightESP and isEnemy(p) and getChar(p) then applyHL(p)
-        else removeHL(p) end
+        -- highlight semua player bila ESP on, warna ikut team/enemy
+        if CFG.highlightESP and getChar(p) then
+            applyHL(p)
+        else
+            removeHL(p)
+        end
     end
 end
 
@@ -953,7 +970,7 @@ local function getBest()
         local sp, on, depth = w2s(pred)
         if not on or depth < 0 then continue end
         local dist = (Vector2.new(sp.X, sp.Y) - center).Magnitude
-        if dist < bestD then bestD = dist; bestP = { part = part, pos = pred } end
+        if dist < bestD then bestD = dist; bestP = { part = part, pos = pred, player = p } end
     end
     return bestP
 end
@@ -974,16 +991,21 @@ local function getMuzzleAttachments()
 end
 
 local aimbotActive  = false
-local lockedTarget  = nil  -- part yang tengah di-lock, tak recalculate tiap frame
+-- lockedTarget = { part = BasePart, player = Player }
+-- simpan player ref terus — avoid re-deriving dari part.Parent tiap frame
+local lockedTarget  = nil
 
-local function targetValid(part)
+local function targetValid(entry)
+    if not entry then return false end
+    local part = entry.part
+    local p    = entry.player
+    -- part masih exist dan masih dalam character yang sama
     if not part or not part.Parent then return false end
-    local p = Players:GetPlayerFromCharacter(part.Parent)
-    if not p then
-        -- HitboxHead parent mungkin character terus
-        p = Players:GetPlayerFromCharacter(part.Parent.Parent)
-    end
-    if not p or not isEnemy(p) then return false end
+    -- player masih dalam game
+    if not p or not p.Parent then return false end
+    -- masih enemy
+    if not isEnemy(p) then return false end
+    -- masih hidup
     local hum = getHum(p); if not hum then return false end
     local hp = 0; pcall(function() hp = hum.Health end)
     return hp > 0
@@ -992,7 +1014,7 @@ end
 local function doAimbot()
     local want = CFG.aimbot and isHeld(BINDS.aimbot)
     if want then
-        -- kalau target lama masih valid, kekalkan dia — jangan recalculate
+        -- validate existing lock — guna player ref, tak re-derive dari part.Parent
         if lockedTarget and not targetValid(lockedTarget) then
             lockedTarget = nil
         end
@@ -1000,16 +1022,17 @@ local function doAimbot()
         -- kalau takde locked target, cari yang baru
         if not lockedTarget then
             local t = getBest()
-            if t then lockedTarget = t.part end
+            -- simpan { part, player } terus
+            if t then lockedTarget = { part = t.part, player = t.player } end
         end
 
         if lockedTarget then
             local smooth = math.clamp(CFG.smoothness, 0.05, 1)
 
             -- predict position ikut velocity
-            local root = lockedTarget.Parent and lockedTarget.Parent:FindFirstChild("HumanoidRootPart")
+            local root = getRoot(lockedTarget.player)
             local vel  = root and root.AssemblyLinearVelocity or Vector3.zero
-            local targetPos = lockedTarget.Position + vel * PRED_FACTOR
+            local targetPos = lockedTarget.part.Position + vel * PRED_FACTOR
 
             -- cek ada weapon equipped tak — kalau takde muzzle, dalam lobby
             local muzzles = getMuzzleAttachments()
