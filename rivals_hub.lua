@@ -965,26 +965,54 @@ local function getMuzzleAttachments()
     return found
 end
 
-local aimbotActive = false
+local aimbotActive  = false
+local lockedTarget  = nil  -- part yang tengah di-lock, tak recalculate tiap frame
+
+local function targetValid(part)
+    if not part or not part.Parent then return false end
+    local p = Players:GetPlayerFromCharacter(part.Parent)
+    if not p then
+        -- HitboxHead parent mungkin character terus
+        p = Players:GetPlayerFromCharacter(part.Parent.Parent)
+    end
+    if not p or not isEnemy(p) then return false end
+    local hum = getHum(p); if not hum then return false end
+    local hp = 0; pcall(function() hp = hum.Health end)
+    return hp > 0
+end
+
 local function doAimbot()
     local want = CFG.aimbot and isHeld(BINDS.aimbot)
     if want then
-        local t = getBest()
-        if t then
+        -- kalau target lama masih valid, kekalkan dia — jangan recalculate
+        if lockedTarget and not targetValid(lockedTarget) then
+            lockedTarget = nil
+        end
+
+        -- kalau takde locked target, cari yang baru
+        if not lockedTarget then
+            local t = getBest()
+            if t then lockedTarget = t.part end
+        end
+
+        if lockedTarget then
             if not aimbotActive then
                 Camera.CameraType = Enum.CameraType.Scriptable
                 aimbotActive      = true
             end
-            -- smoothness slider: 0 = instant, 1 = slowest
-            -- lerp factor = 1 - smoothness, clamped supaya tak freeze
-            local smooth = math.clamp(1 - CFG.smoothness, 0.05, 1)
-            local targetPos = t.pos
+
+            local smooth = math.clamp(CFG.smoothness, 0.05, 1)
+
+            -- predict position ikut velocity
+            local root = lockedTarget.Parent and lockedTarget.Parent:FindFirstChild("HumanoidRootPart")
+            local vel  = root and root.AssemblyLinearVelocity or Vector3.zero
+            local targetPos = lockedTarget.Position + vel * PRED_FACTOR
 
             -- 1) redirect camera
             Camera.CFrame = Camera.CFrame:Lerp(
                 CFrame.new(Camera.CFrame.Position, targetPos), smooth)
 
-            -- 2) redirect setiap _muzzle attachment supaya bullet origin + dir betul
+            -- 2) redirect setiap _muzzle attachment
             local muzzles = getMuzzleAttachments()
             for _, att in ipairs(muzzles) do
                 if not _muzzleStored[att] then
@@ -1002,7 +1030,8 @@ local function doAimbot()
             end
         end
     else
-        -- restore muzzle CFrames bila lepas key
+        -- lepas key — reset semua
+        lockedTarget = nil
         for att, cf in pairs(_muzzleStored) do
             pcall(function() att.CFrame = cf end)
         end
@@ -1097,6 +1126,7 @@ UserInputService.InputBegan:Connect(function(inp, gpe)
         fovCircle.Visible = CFG.showFOV and CFG.aimbot
         -- restore muzzle CFrames bila toggle off supaya weapon balik normal
         if not CFG.aimbot then
+            lockedTarget = nil
             for att, cf in pairs(_muzzleStored) do
                 pcall(function() att.CFrame = cf end)
             end
