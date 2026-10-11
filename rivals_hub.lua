@@ -905,8 +905,7 @@ local function isVisible(p)
     return result == nil or result.Instance:IsDescendantOf(getChar(p))
 end
 
--- velocity history per part — used for one-frame prediction
--- key: BasePart, value: Vector3 last world position
+-- per-part world position last frame — velocity prediction cache
 local lastPos = {}
 
 local function getBest()
@@ -930,109 +929,136 @@ local function getBest()
 end
 
 -- spring state — carries over between frames for smooth continuity
--- currentCF: where the camera is right now (our smoothed value)
--- velocity:  angular velocity Vector3 in world space (spring damping)
-local springCF  = nil   -- CFrame — initialised on first lock
-local springVel = Vector3.new(0, 0, 0)
-
+local springCF     = nil
+local springVel    = Vector3.new(0, 0, 0)
 local aimbotActive = false
+
+-- Rivals: bullet fires from weapon muzzle (M), not camera origin (C).
+-- Weapon sway / bob shifts M every frame independently of camera.
+-- We search for a muzzle Attachment on the current tool Handle;
+-- fall back to Handle.Position if none is found.
+local MUZZLE_NAMES = {"Muzzle","MuzzlePoint","FirePoint","Tip","Barrel","Flash"}
+local function getMuzzlePos()
+    local char = LP.Character; if not char then return nil end
+    local tool = char:FindFirstChildOfClass("Tool"); if not tool then return nil end
+    local handle = tool:FindFirstChild("Handle"); if not handle then return nil end
+    for _, name in ipairs(MUZZLE_NAMES) do
+        local a = handle:FindFirstChild(name)
+        if a and a:IsA("Attachment") then return a.WorldPosition end
+    end
+    return handle.Position
+end
 
 local function doAimbot(dt)
     local want = CFG.aimbot and isHeld(BINDS.aimbot)
     if not want then
         if aimbotActive then
             Camera.CameraType = Enum.CameraType.Custom
-            aimbotActive      = false
-            springCF          = nil
-            springVel         = Vector3.new(0, 0, 0)
+            aimbotActive = false
+            springCF     = nil
+            springVel    = Vector3.new(0, 0, 0)
         end
         return
     end
 
     local target = getBest()
     if not target then
-        -- no target in FOV — release camera so sway feels natural
+        -- no target in FOV — release camera so movement feels natural
         if aimbotActive then
             Camera.CameraType = Enum.CameraType.Custom
-            aimbotActive      = false
-            springCF          = nil
-            springVel         = Vector3.new(0, 0, 0)
+            aimbotActive = false
+            springCF     = nil
+            springVel    = Vector3.new(0, 0, 0)
         end
         return
     end
 
-    -- only take camera scriptable when in normal gameplay (Custom type)
+    -- only take Scriptable during normal gameplay (Custom type)
     -- lobby uses Orbital/Track — taking Scriptable there causes spin
     if not aimbotActive then
         if Camera.CameraType ~= Enum.CameraType.Custom then return end
         Camera.CameraType = Enum.CameraType.Scriptable
-        aimbotActive      = true
-        springCF          = Camera.CFrame
-        springVel         = Vector3.new(0, 0, 0)
+        aimbotActive = true
+        springCF  = Camera.CFrame
+        springVel = Vector3.new(0, 0, 0)
     end
 
     -- ── velocity prediction ────────────────────────────────
-    -- extrapolate target position one frame forward to pre-aim
-    -- against movement, cancelling the lag that makes it look jittery
-    local worldPos   = target.Position
-    local prevPos    = lastPos[target]
-    local predicted  = worldPos
-    if prevPos then
-        -- clamp extrapolation — don't chase teleports
-        local vel = worldPos - prevPos
-        if vel.Magnitude < 8 then          -- >8 studs/frame = teleport, skip
-            predicted = worldPos + vel     -- one frame ahead
+    -- one frame extrapolation; skip teleports (>8 studs/frame)
+    local worldPos  = target.Position
+    local predicted = worldPos
+    local prev      = lastPos[target]
+    if prev then
+        local vel = worldPos - prev
+        if vel.Magnitude < 8 then
+            predicted = worldPos + vel
         end
     end
     lastPos[target] = worldPos
 
-    -- ── spring lerp ───────────────────────────────────────
-    -- stiffness / damping tuned so smoothness slider feels right:
-    --   smoothness 0.0 → near-instant snap (stiffness high)
-    --   smoothness 1.0 → very loose follow
-    -- formula: critically damped spring  x'' = -k(x-target) - c*x'
-    local stiffness = math.clamp(1 - CFG.smoothness, 0.04, 1) * 28   -- 1.12 → 28
-    local damping   = 2 * math.sqrt(stiffness) * 0.85                 -- slightly under-damped for feel
+    -- ── Rivals muzzle compensation ─────────────────────────
+    -- Bullet origin = muzzle M, camera origin = C, target = T.
+    -- To hit T via a ray from M the camera must look toward aimPoint
+    -- where: (aimPoint - C) == (T - M)  →  aimPoint = T + (C - M)
+    -- This shifts the aim point so the muzzle ray passes through T
+    -- regardless of how much the weapon has swayed this frame.
+    local camPos   = Camera.CFrame.Position
+    local muzzle   = getMuzzlePos()
+    local aimPoint = muzzle and (predicted + (camPos - muzzle)) or predicted
 
-    -- desired CFrame: look from camera origin toward predicted head
-    local camPos    = springCF.Position
-    local desiredCF = CFrame.new(camPos, predicted)
+    -- spring state guard
+    if not springCF then
+        springCF  = Camera.CFrame
+        springVel = Vector3.new(0, 0, 0)
+    end
 
-    -- decompose rotation error into axis-angle, apply spring force
+    -- ── spring parameters ─────────────────────────────────
+    -- smoothness 0.0 → high stiffness (near-instant snap)
+    -- smoothness 1.0 → low stiffness (loose follow)
+    local stiffness = math.clamp(1 - CFG.smoothness, 0.04, 1) * 28
+    local damping   = 2 * math.sqrt(stiffness) * 0.85   -- slightly under-damped
+
+    -- angular error between current spring orientation and desired
+    local desiredCF = CFrame.new(camPos, aimPoint)
     local errorCF   = springCF:Inverse() * desiredCF
     local axis, ang = errorCF:ToAxisAngle()
-    -- world-space angular displacement
     local disp      = springCF:VectorToWorldSpace(axis * ang)
 
-    -- spring acceleration
-    local accel     = disp * stiffness - springVel * damping
-    springVel       = springVel + accel * dt
-
-    -- clamp angular speed to prevent overshoot on huge initial error
-    local maxSpeed  = math.rad(720)   -- 720 deg/s max
-    if springVel.Magnitude > maxSpeed then
-        springVel = springVel.Unit * maxSpeed
+    -- spring force → accumulate velocity
+    local accel = disp * stiffness - springVel * damping
+    springVel   = springVel + accel * dt
+    if springVel.Magnitude > math.rad(720) then
+        springVel = springVel.Unit * math.rad(720)
     end
 
-    -- integrate
-    local deltaAngle = springVel * dt
-    if deltaAngle.Magnitude > 0.0001 then
-        local rotAxis = deltaAngle.Unit
-        local rotAng  = deltaAngle.Magnitude
-        springCF = CFrame.new(camPos)
-            * CFrame.fromAxisAngle(
-                springCF:VectorToObjectSpace(rotAxis), rotAng)
-            * CFrame.new(0, 0, 0,
-                springCF.RightVector.X, springCF.RightVector.Y, springCF.RightVector.Z,
-                springCF.UpVector.X,    springCF.UpVector.Y,    springCF.UpVector.Z,
-                -springCF.LookVector.X,-springCF.LookVector.Y, -springCF.LookVector.Z)
+    -- ── rotation integration (BUG FIX) ────────────────────
+    -- Original: CFrame.new(0,0,0, R.X,R.Y,R.Z, U.X,U.Y,U.Z, -L.X,-L.Y,-L.Z)
+    -- Roblox 12-arg ctor is row-major; each row must be [Right.n, Up.n, Back.n]
+    -- — i.e. one component of each basis per row (columns = basis vectors).
+    -- Original put whole basis vectors as rows → transposed matrix → inverse
+    -- rotation → spring saw target as "behind" every frame → overshoot →
+    -- camera oscillated instead of converging → bullets scattered.
+    --
+    -- Fix: rotate the three world-space basis vectors by the world-space delta
+    -- using CFrame.fromAxisAngle, then reconstruct cleanly with CFrame.fromMatrix.
+    -- fromMatrix(pos, vX=right, vY=up, vZ=back) has no transposition ambiguity.
+    local delta = springVel * dt
+    if delta.Magnitude > 0.0001 then
+        local dR = CFrame.fromAxisAngle(delta.Unit, delta.Magnitude)
+        -- dR:VectorToWorldSpace applies dR's rotation to each world-space vector
+        local nR = dR:VectorToWorldSpace(springCF.RightVector)
+        local nU = dR:VectorToWorldSpace(springCF.UpVector)
+        local nL = dR:VectorToWorldSpace(springCF.LookVector)
+        springCF = CFrame.fromMatrix(camPos, nR, nU, -nL)
+    else
+        -- no angular step — repin position, preserve orientation
+        springCF = CFrame.fromMatrix(camPos,
+            springCF.RightVector,
+            springCF.UpVector,
+           -springCF.LookVector)
     end
 
-    -- final: look at predicted from current camera position, blended
-    -- we re-derive from camPos so position never drifts
-    local finalDir = (springCF.LookVector).Unit
-    Camera.CFrame  = CFrame.new(Camera.CFrame.Position,
-        Camera.CFrame.Position + finalDir)
+    Camera.CFrame = springCF
 end
 
 -- ══════════════════════════════════
