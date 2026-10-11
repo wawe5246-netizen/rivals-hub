@@ -68,8 +68,9 @@ end
 
 local miscOn             = false
 local aimbotToggleActive = false  -- latch untuk toggle mode
-local autoBurstHeld      = false  -- M1 sedang ditekan
+local autoBurstHeld      = false  -- M1 physical ditekan
 local burstRunning       = false  -- loop aktif
+local burstReleasing     = false  -- kita yang release, bukan player
 
 -- ══════════════════════════════════
 --  COLOUR TOKENS — warm amber redesign
@@ -1157,14 +1158,18 @@ local function runAutoBurst()
     while CFG.autoBurst and autoBurstHeld do
         if hasBurstAPI then
             pcall(mouse1press)
-            task.wait(0.04)   -- hold selama satu frame — cukup untuk register shot
+            task.wait(0.04)
+            -- flag dulu supaya InputEnded tau ini kita yang release, bukan player
+            burstReleasing = true
             pcall(mouse1release)
+            burstReleasing = false
         end
-        -- tunggu gap antara shots — ini yang control heat
         task.wait(math.max(CFG.burstInterval, 0.06))
     end
-    -- pastikan M1 released bila loop habis
+    -- clean release bila player betul-betul lepas M1
+    burstReleasing = true
     if hasBurstAPI then pcall(mouse1release) end
+    burstReleasing = false
     burstRunning = false
 end
 
@@ -1184,7 +1189,10 @@ end)
 
 UserInputService.InputEnded:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 then
-        autoBurstHeld = false
+        -- ignore release yang kita sendiri generate dalam burst loop
+        if not burstReleasing then
+            autoBurstHeld = false
+        end
     end
 end)
 
