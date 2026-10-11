@@ -37,18 +37,18 @@ local miscOn = false
 --  COLOUR SYSTEM
 -- ══════════════════════════════════
 local C = {
-    bg       = Color3.fromRGB(10,  10,  11),   -- near-black base
-    panel    = Color3.fromRGB(16,  16,  18),   -- panel bg
-    card     = Color3.fromRGB(22,  22,  25),   -- row cards
-    border   = Color3.fromRGB(38,  38,  44),   -- subtle border
-    borderHi = Color3.fromRGB(60,  60,  70),   -- hover border
-    accent   = Color3.fromRGB(110, 86,  255),  -- purple accent
-    accentDim= Color3.fromRGB(30,  24,  60),   -- accent bg tint
-    textPri  = Color3.fromRGB(238, 238, 242),  -- primary text
-    textSec  = Color3.fromRGB(120, 120, 132),  -- secondary text
-    textMut  = Color3.fromRGB(65,  65,  72),   -- muted / section labels
+    bg       = Color3.fromRGB(10,  10,  11),
+    panel    = Color3.fromRGB(16,  16,  18),
+    card     = Color3.fromRGB(22,  22,  25),
+    border   = Color3.fromRGB(38,  38,  44),
+    borderHi = Color3.fromRGB(60,  60,  70),
+    accent   = Color3.fromRGB(110, 86,  255),
+    accentDim= Color3.fromRGB(30,  24,  60),
+    textPri  = Color3.fromRGB(238, 238, 242),
+    textSec  = Color3.fromRGB(120, 120, 132),
+    textMut  = Color3.fromRGB(65,  65,  72),
     white    = Color3.fromRGB(255, 255, 255),
-    success  = Color3.fromRGB(52,  211, 153),  -- green dot
+    success  = Color3.fromRGB(52,  211, 153),
     danger   = Color3.fromRGB(248, 81,  73),
 }
 
@@ -65,12 +65,12 @@ local function make(cls, props, parent)
     if parent then o.Parent=parent end
     return o
 end
-local function corner(r,p)  make("UICorner",{CornerRadius=UDim.new(0,r)},p) end
+local function corner(r,p)   make("UICorner",{CornerRadius=UDim.new(0,r)},p) end
 local function stroke(t,c,p) make("UIStroke",{Thickness=t,Color=c,ApplyStrokeMode=Enum.ApplyStrokeMode.Border},p) end
 local function pad(t,r,b,l,p) make("UIPadding",{PaddingTop=UDim.new(0,t),PaddingRight=UDim.new(0,r),PaddingBottom=UDim.new(0,b),PaddingLeft=UDim.new(0,l)},p) end
 local function anchor(o,ax,ay) o.AnchorPoint=Vector2.new(ax,ay) end
-local function tw(o,t,props,style)
-    TweenService:Create(o,TweenInfo.new(t,style or Enum.EasingStyle.Quint,Enum.EasingDirection.Out),props):Play()
+local function tw(o,t,props)
+    TweenService:Create(o,TweenInfo.new(t,Enum.EasingStyle.Quint,Enum.EasingDirection.Out),props):Play()
 end
 local function lbl(txt,fs,font,col,p)
     return make("TextLabel",{
@@ -84,26 +84,32 @@ end
 --  ROOT GUI
 -- ══════════════════════════════════
 local gui = make("ScreenGui",{
-    Name="RivalsHubV2",
-    ResetOnSpawn=false,
-    ZIndexBehavior=Enum.ZIndexBehavior.Sibling,
-    DisplayOrder=10,
+    Name="RivalsHubV2", ResetOnSpawn=false,
+    ZIndexBehavior=Enum.ZIndexBehavior.Sibling, DisplayOrder=10,
 },LP.PlayerGui)
 
--- main window: 280 wide, taller to fit all rows cleanly
+-- outer shell: NO ClipsDescendants so tabLine isn't clipped
 local WIN_W, WIN_H = 280, 420
 local win = make("Frame",{
-    Size     = UDim2.new(0,WIN_W,0,WIN_H),
-    Position = UDim2.new(0,24,0.5,-WIN_H/2),
-    BackgroundColor3 = C.bg,
-    Active   = true,
-    ClipsDescendants = true,
+    Size=UDim2.new(0,WIN_W,0,WIN_H),
+    Position=UDim2.new(0,24,0.5,-WIN_H/2),
+    BackgroundColor3=C.bg,
+    Active=true,
+    ClipsDescendants=false,
 },gui)
 corner(16,win)
 stroke(0.5,C.border,win)
 
+-- inner clip frame: handles rounded clipping of body content without eating tabBar
+local clip = make("Frame",{
+    Size=UDim2.new(1,0,1,0),
+    BackgroundTransparency=1,
+    ClipsDescendants=true,
+},win)
+corner(16,clip)
+
 -- ══════════════════════════════════
---  DRAG
+--  DRAG (on win)
 -- ══════════════════════════════════
 local dragging,dragStart,startPos
 win.InputBegan:Connect(function(i)
@@ -122,94 +128,89 @@ UserInputService.InputChanged:Connect(function(i)
 end)
 
 -- ══════════════════════════════════
---  HEADER  (48px)
+--  HEADER  48px  — parented to clip
 -- ══════════════════════════════════
 local hdr = make("Frame",{
     Size=UDim2.new(1,0,0,48),
     BackgroundColor3=C.panel,
     BorderSizePixel=0,
-},win)
--- bottom border line on header
+    ZIndex=2,
+},clip)
+
+-- header bottom border
 make("Frame",{
     Size=UDim2.new(1,0,0,1),
-    Position=UDim2.new(0,0,1,-1),
+    Position=UDim2.new(0,0,1,0),
     BackgroundColor3=C.border,
     BorderSizePixel=0,
+    ZIndex=3,
 },hdr)
 
--- logo dot + title
-local logoDot = make("Frame",{
-    Size=UDim2.new(0,6,0,6),
-    BackgroundColor3=C.accent,
-},hdr)
-corner(3,logoDot); anchor(logoDot,0,0.5); logoDot.Position=UDim2.new(0,16,0.5,0)
+-- accent dot
+local logoDot = make("Frame",{Size=UDim2.new(0,6,0,6),BackgroundColor3=C.accent,ZIndex=3},hdr)
+corner(3,logoDot); anchor(logoDot,0,0.5); logoDot.Position=UDim2.new(0,14,0.5,0)
 
+-- title  "rivals hub"
 local titleL = lbl("rivals",14,FB,C.textPri,hdr)
-anchor(titleL,0,0.5); titleL.Position=UDim2.new(0,28,0.5,0)
+anchor(titleL,0,0.5); titleL.Position=UDim2.new(0,26,0.5,0); titleL.ZIndex=3
 local hubL = lbl(" hub",14,F,C.textSec,hdr)
-anchor(hubL,0,0.5); hubL.Position=UDim2.new(0,28+titleL.TextBounds.X,0.5,0)
+anchor(hubL,0,0.5); hubL.Position=UDim2.new(0,68,0.5,0); hubL.ZIndex=3
 
--- live badge
+-- LIVE badge
 local liveBadge = make("Frame",{
-    Size=UDim2.new(0,36,0,18),
-    BackgroundColor3=C.accentDim,
+    Size=UDim2.new(0,36,0,18), BackgroundColor3=C.accentDim, ZIndex=3,
 },hdr)
-corner(9,liveBadge); anchor(liveBadge,1,0.5); liveBadge.Position=UDim2.new(1,-44,0.5,0)
-local liveL = make("TextLabel",{
-    Text="LIVE", TextSize=9, Font=FB,
-    TextColor3=C.accent, BackgroundTransparency=1,
-    Size=UDim2.new(1,0,1,0),
+corner(9,liveBadge); anchor(liveBadge,1,0.5); liveBadge.Position=UDim2.new(1,-42,0.5,0)
+make("TextLabel",{
+    Text="LIVE", TextSize=9, Font=FB, TextColor3=C.accent,
+    BackgroundTransparency=1, Size=UDim2.new(1,0,1,0),
     TextXAlignment=Enum.TextXAlignment.Center,
-    TextYAlignment=Enum.TextYAlignment.Center,
+    TextYAlignment=Enum.TextYAlignment.Center, ZIndex=4,
 },liveBadge)
 
--- close button
+-- close ✕
 local closeBtn = make("TextButton",{
-    Size=UDim2.new(0,18,0,18),
-    BackgroundTransparency=1,
-    Text="✕", TextSize=11, Font=FB,
-    TextColor3=C.textMut,
+    Size=UDim2.new(0,18,0,18), BackgroundTransparency=1,
+    Text="✕", TextSize=12, Font=FB, TextColor3=C.textMut, ZIndex=3,
 },hdr)
-anchor(closeBtn,1,0.5); closeBtn.Position=UDim2.new(1,-14,0.5,0)
+anchor(closeBtn,1,0.5); closeBtn.Position=UDim2.new(1,-12,0.5,0)
 closeBtn.MouseEnter:Connect(function() tw(closeBtn,0.1,{TextColor3=C.danger}) end)
 closeBtn.MouseLeave:Connect(function() tw(closeBtn,0.1,{TextColor3=C.textMut}) end)
 closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
 
 -- ══════════════════════════════════
---  TAB BAR  (36px)
+--  TAB BAR  36px — parented to clip
 -- ══════════════════════════════════
 local tabBar = make("Frame",{
     Size=UDim2.new(1,0,0,36),
     Position=UDim2.new(0,0,0,48),
     BackgroundColor3=C.panel,
     BorderSizePixel=0,
-    ClipsDescendants=false,
-},win)
+    ZIndex=2,
+},clip)
 make("UIListLayout",{
     FillDirection=Enum.FillDirection.Horizontal,
     SortOrder=Enum.SortOrder.LayoutOrder,
 },tabBar)
--- tabbar bottom border
+-- tabbar bottom divider
 make("Frame",{
     Size=UDim2.new(1,0,0,1),
     Position=UDim2.new(0,0,1,0),
     BackgroundColor3=C.border,
-    BorderSizePixel=0,
-    ZIndex=2,
+    BorderSizePixel=0, ZIndex=4,
 },tabBar)
--- sliding underline
+-- sliding accent underline
 local tabLine = make("Frame",{
     Size=UDim2.new(0.25,0,0,2),
     Position=UDim2.new(0,0,1,-1),
     BackgroundColor3=C.accent,
-    BorderSizePixel=0,
-    ZIndex=3,
+    BorderSizePixel=0, ZIndex=5,
 },tabBar)
 
 -- ══════════════════════════════════
---  BODY  (scroll, fills between tabbar and statusbar)
+--  BODY  — parented to clip
 -- ══════════════════════════════════
--- header(48) + tabBar(36) = 84 top; statusBar(32) bottom
+-- hdr=48, tabBar=36 → top=84; statusBar=32 → bottom offset=32
 local body = make("ScrollingFrame",{
     Size=UDim2.new(1,0,1,-116),
     Position=UDim2.new(0,0,0,84),
@@ -219,33 +220,30 @@ local body = make("ScrollingFrame",{
     AutomaticCanvasSize=Enum.AutomaticSize.Y,
     ClipsDescendants=true,
     BorderSizePixel=0,
-},win)
+    ZIndex=2,
+},clip)
 
 -- ══════════════════════════════════
---  STATUS BAR  (32px, pinned bottom)
+--  STATUS BAR  32px — parented to clip
 -- ══════════════════════════════════
 local statusBar = make("Frame",{
     Size=UDim2.new(1,0,0,32),
     BackgroundColor3=C.panel,
-    BorderSizePixel=0,
-},win)
+    BorderSizePixel=0, ZIndex=2,
+},clip)
 anchor(statusBar,0,1); statusBar.Position=UDim2.new(0,0,1,0)
 make("Frame",{
-    Size=UDim2.new(1,0,0,1),
-    BackgroundColor3=C.border,
-    BorderSizePixel=0,
+    Size=UDim2.new(1,0,0,1), BackgroundColor3=C.border, BorderSizePixel=0, ZIndex=3,
 },statusBar)
-local dot = make("Frame",{Size=UDim2.new(0,5,0,5),BackgroundColor3=C.success},statusBar)
-corner(3,dot); anchor(dot,0,0.5); dot.Position=UDim2.new(0,14,0.5,0)
+local dot = make("Frame",{Size=UDim2.new(0,5,0,5),BackgroundColor3=C.success,ZIndex=3},statusBar)
+corner(3,dot); anchor(dot,0,0.5); dot.Position=UDim2.new(0,12,0.5,0)
 local statusL = make("TextLabel",{
-    Text="0 features active",
-    TextSize=10, Font=FS,
-    TextColor3=C.textMut,
-    BackgroundTransparency=1,
+    Text="0 features active", TextSize=10, Font=FS,
+    TextColor3=C.textMut, BackgroundTransparency=1,
     AutomaticSize=Enum.AutomaticSize.XY,
-    TextXAlignment=Enum.TextXAlignment.Left,
+    TextXAlignment=Enum.TextXAlignment.Left, ZIndex=3,
 },statusBar)
-anchor(statusL,0,0.5); statusL.Position=UDim2.new(0,26,0.5,0)
+anchor(statusL,0,0.5); statusL.Position=UDim2.new(0,24,0.5,0)
 
 local function updateStatus()
     local n=0
@@ -256,9 +254,9 @@ end
 -- ══════════════════════════════════
 --  TAB SYSTEM
 -- ══════════════════════════════════
-local TABS   = {"ESP","Aimbot","Misc","Keybinds"}
-local panels = {}
-local tabBtns= {}
+local TABS    = {"ESP","Aimbot","Misc","Keybinds"}
+local panels  = {}
+local tabBtns = {}
 
 for i,name in ipairs(TABS) do
     local btn = make("TextButton",{
@@ -266,8 +264,7 @@ for i,name in ipairs(TABS) do
         BackgroundColor3=C.panel,
         Text=name, TextSize=11, Font=F,
         TextColor3= i==1 and C.textPri or C.textMut,
-        LayoutOrder=i,
-        BorderSizePixel=0,
+        LayoutOrder=i, BorderSizePixel=0, ZIndex=3,
     },tabBar)
     tabBtns[name]=btn
 
@@ -275,13 +272,10 @@ for i,name in ipairs(TABS) do
         Size=UDim2.new(1,0,0,0),
         AutomaticSize=Enum.AutomaticSize.Y,
         BackgroundTransparency=1,
-        Visible=i==1,
+        Visible=i==1, ZIndex=2,
     },body)
     pad(8,12,12,12,panel)
-    make("UIListLayout",{
-        SortOrder=Enum.SortOrder.LayoutOrder,
-        Padding=UDim.new(0,4),
-    },panel)
+    make("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,4)},panel)
     panels[name]=panel
 
     btn.MouseButton1Click:Connect(function()
@@ -298,65 +292,43 @@ end
 -- ══════════════════════════════════
 --  ROW BUILDERS
 -- ══════════════════════════════════
-
--- section label
 local function secLbl(p,txt,ord)
     local fr = make("Frame",{
-        Size=UDim2.new(1,0,0,24),
-        BackgroundTransparency=1,
-        LayoutOrder=ord,
+        Size=UDim2.new(1,0,0,24), BackgroundTransparency=1, LayoutOrder=ord,
     },p)
     make("TextLabel",{
-        Text=string.upper(txt),
-        TextSize=9, Font=FB,
-        TextColor3=C.textMut,
-        BackgroundTransparency=1,
-        AutomaticSize=Enum.AutomaticSize.XY,
+        Text=string.upper(txt), TextSize=9, Font=FB, TextColor3=C.textMut,
+        BackgroundTransparency=1, AutomaticSize=Enum.AutomaticSize.XY,
         TextXAlignment=Enum.TextXAlignment.Left,
-        AnchorPoint=Vector2.new(0,1),
-        Position=UDim2.new(0,2,1,0),
+        AnchorPoint=Vector2.new(0,1), Position=UDim2.new(0,2,1,0),
     },fr)
 end
 
--- toggle row: clean card with pill
 local function toggleRow(p,name,sub,key,ord)
     local row = make("Frame",{
-        Size=UDim2.new(1,0,0,46),
-        BackgroundColor3=C.card,
-        LayoutOrder=ord,
+        Size=UDim2.new(1,0,0,46), BackgroundColor3=C.card, LayoutOrder=ord,
     },p)
-    corner(8,row)
-    stroke(0.5,C.border,row)
+    corner(8,row); stroke(0.5,C.border,row)
 
-    -- label stack
     local lf = make("Frame",{
-        Size=UDim2.new(1,-52,1,0),
-        Position=UDim2.new(0,12,0,0),
-        BackgroundTransparency=1,
+        Size=UDim2.new(1,-52,1,0), Position=UDim2.new(0,12,0,0), BackgroundTransparency=1,
     },row)
     make("UIListLayout",{VerticalAlignment=Enum.VerticalAlignment.Center,Padding=UDim.new(0,2)},lf)
     lbl(name,12,F,C.textPri,lf)
     if sub then lbl(sub,10,FS,C.textSec,lf) end
 
-    -- pill toggle
     local pillBg = make("Frame",{
         Size=UDim2.new(0,32,0,18),
-        BackgroundColor3= CFG[key] and C.accent or C.border,
-        AnchorPoint=Vector2.new(1,0.5),
-        Position=UDim2.new(1,-12,0.5,0),
+        BackgroundColor3=CFG[key] and C.accent or C.border,
+        AnchorPoint=Vector2.new(1,0.5), Position=UDim2.new(1,-12,0.5,0),
     },row)
     corner(9,pillBg)
     local thumb = make("Frame",{
-        Size=UDim2.new(0,12,0,12),
-        BackgroundColor3=C.white,
+        Size=UDim2.new(0,12,0,12), BackgroundColor3=C.white,
         AnchorPoint=Vector2.new(0,0.5),
         Position=CFG[key] and UDim2.new(1,-15,0.5,0) or UDim2.new(0,3,0.5,0),
     },pillBg)
     corner(6,thumb)
-
-    -- hover glow on card
-    row.MouseEnter:Connect(function() tw(row,0.12,{BackgroundColor3=C.card}) stroke(0.5,C.borderHi,row) end)
-    row.MouseLeave:Connect(function() stroke(0.5,C.border,row) end)
 
     pillBg.InputBegan:Connect(function(i)
         if i.UserInputType~=Enum.UserInputType.MouseButton1 then return end
@@ -367,45 +339,34 @@ local function toggleRow(p,name,sub,key,ord)
     end)
 end
 
--- slider row
-local function sliderRow(p,name,key,min,max,dp,ord)
+local function sliderRow(p,name,key,smin,smax,dp,ord)
     local row = make("Frame",{
-        Size=UDim2.new(1,0,0,54),
-        BackgroundColor3=C.card,
-        LayoutOrder=ord,
+        Size=UDim2.new(1,0,0,54), BackgroundColor3=C.card, LayoutOrder=ord,
     },p)
-    corner(8,row)
-    stroke(0.5,C.border,row)
+    corner(8,row); stroke(0.5,C.border,row)
     pad(8,12,8,12,row)
     make("UIListLayout",{Padding=UDim.new(0,6)},row)
 
     local top = make("Frame",{Size=UDim2.new(1,0,0,14),BackgroundTransparency=1},row)
     lbl(name,12,F,C.textPri,top)
     local vl = make("TextLabel",{
-        Text=tostring(CFG[key]),
-        TextSize=11, Font=FS,
-        TextColor3=C.accent,
-        BackgroundTransparency=1,
-        AutomaticSize=Enum.AutomaticSize.XY,
+        Text=tostring(CFG[key]), TextSize=11, Font=FS, TextColor3=C.accent,
+        BackgroundTransparency=1, AutomaticSize=Enum.AutomaticSize.XY,
         TextXAlignment=Enum.TextXAlignment.Right,
-        AnchorPoint=Vector2.new(1,0),
-        Position=UDim2.new(1,0,0,0),
+        AnchorPoint=Vector2.new(1,0), Position=UDim2.new(1,0,0,0),
     },top)
 
     local trackBg = make("Frame",{Size=UDim2.new(1,0,0,3),BackgroundColor3=C.border},row)
     corner(2,trackBg)
-    local ratio=(CFG[key]-min)/(max-min)
+    local ratio=(CFG[key]-smin)/(smax-smin)
     local fill=make("Frame",{Size=UDim2.new(ratio,0,1,0),BackgroundColor3=C.accent},trackBg)
     corner(2,fill)
 
-    local drag=make("TextButton",{
-        Size=UDim2.new(1,0,0,22),
-        BackgroundTransparency=1,Text="",
-    },row)
+    local drag=make("TextButton",{Size=UDim2.new(1,0,0,22),BackgroundTransparency=1,Text=""},row)
     local held=false
     local function setV(x)
         local r=math.clamp(x/drag.AbsoluteSize.X,0,1)
-        local v=min+(max-min)*r
+        local v=smin+(smax-smin)*r
         v=dp==0 and math.floor(v+0.5) or math.floor(v*10^dp+0.5)/10^dp
         CFG[key]=v; fill.Size=UDim2.new(r,0,1,0); vl.Text=tostring(v)
     end
@@ -422,52 +383,39 @@ local function sliderRow(p,name,key,min,max,dp,ord)
     end)
 end
 
--- keybind row
 local function kbRow(p,name,sub,bkey,ord)
     local row = make("Frame",{
-        Size=UDim2.new(1,0,0,46),
-        BackgroundColor3=C.card,
-        LayoutOrder=ord,
+        Size=UDim2.new(1,0,0,46), BackgroundColor3=C.card, LayoutOrder=ord,
     },p)
-    corner(8,row)
-    stroke(0.5,C.border,row)
+    corner(8,row); stroke(0.5,C.border,row)
 
     local lf = make("Frame",{
-        Size=UDim2.new(1,-70,1,0),
-        Position=UDim2.new(0,12,0,0),
-        BackgroundTransparency=1,
+        Size=UDim2.new(1,-70,1,0), Position=UDim2.new(0,12,0,0), BackgroundTransparency=1,
     },row)
     make("UIListLayout",{VerticalAlignment=Enum.VerticalAlignment.Center,Padding=UDim.new(0,2)},lf)
     lbl(name,12,F,C.textPri,lf)
     if sub then lbl(sub,10,FS,C.textSec,lf) end
 
     local kb = make("TextButton",{
-        Size=UDim2.new(0,52,0,24),
-        BackgroundColor3=C.bg,
-        Text=BINDS[bkey].Name, TextSize=10, Font=FB,
-        TextColor3=C.textSec,
-        AnchorPoint=Vector2.new(1,0.5),
-        Position=UDim2.new(1,-12,0.5,0),
+        Size=UDim2.new(0,52,0,24), BackgroundColor3=C.bg,
+        Text=BINDS[bkey].Name, TextSize=10, Font=FB, TextColor3=C.textSec,
+        AnchorPoint=Vector2.new(1,0.5), Position=UDim2.new(1,-12,0.5,0),
     },row)
     corner(6,kb); stroke(0.5,C.border,kb)
 
     local listening=false
     kb.MouseButton1Click:Connect(function()
         if listening then
-            listening=false
-            tw(kb,0.1,{BackgroundColor3=C.bg,TextColor3=C.textSec})
-            return
+            listening=false; kb.Text=BINDS[bkey].Name
+            tw(kb,0.1,{BackgroundColor3=C.bg,TextColor3=C.textSec}); return
         end
-        listening=true
-        kb.Text="..."
+        listening=true; kb.Text="..."
         tw(kb,0.1,{BackgroundColor3=C.accentDim,TextColor3=C.accent})
     end)
     UserInputService.InputBegan:Connect(function(i)
         if not listening then return end
         if i.UserInputType~=Enum.UserInputType.Keyboard then return end
-        listening=false
-        BINDS[bkey]=i.KeyCode
-        kb.Text=i.KeyCode.Name
+        listening=false; BINDS[bkey]=i.KeyCode; kb.Text=i.KeyCode.Name
         tw(kb,0.1,{BackgroundColor3=C.bg,TextColor3=C.textSec})
     end)
 end
