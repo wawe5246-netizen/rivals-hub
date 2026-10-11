@@ -146,7 +146,10 @@ anchor(closeBtn,1,0.5); closeBtn.Position=UDim2.new(1,-10,0.5,0)
 corner(5,closeBtn)
 closeBtn.MouseEnter:Connect(function() tw(closeBtn,0.1,{TextColor3=C.textSec}) end)
 closeBtn.MouseLeave:Connect(function() tw(closeBtn,0.1,{TextColor3=C.textMut}) end)
-closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
+closeBtn.MouseButton1Click:Connect(function()
+    Camera.CameraType = Enum.CameraType.Custom
+    gui:Destroy()
+end)
 
 -- header bottom border
 make("Frame",{
@@ -457,11 +460,19 @@ updateStatus()
 --  HIGHLIGHT ESP
 -- ══════════════════════════════════
 local HL_NAME="RivalsHub_HL"
-local function isEnemy(p) return not CFG.teamCheck or p.Team~=LP.Team end
+local function isEnemy(p)
+    if not CFG.teamCheck then return true end
+    if p.Team == nil or LP.Team == nil then return true end
+    return p.Team ~= LP.Team
+end
 local function getChar(p) return p.Character end
 local function getRoot(p) local c=getChar(p); return c and c:FindFirstChild("HumanoidRootPart") end
 local function getHum(p) local c=getChar(p); return c and c:FindFirstChildOfClass("Humanoid") end
-local function getHead(p) local c=getChar(p); return c and c:FindFirstChild("Head") end
+-- HitboxHead is Rivals' actual server hitbox (Part), not the visual MeshPart Head
+local function getHead(p)
+    local c=getChar(p)
+    return c and (c:FindFirstChild("HitboxHead") or c:FindFirstChild("Head"))
+end
 
 local function applyHL(p)
     local c=getChar(p); if not c then return end
@@ -516,13 +527,15 @@ local function updateDrawESP()
             d.name.Position=Vector2.new(sp.X,sp.Y-sz*1.7); d.name.Text=p.Name; d.name.Size=sz; d.name.Visible=true
         else d.name.Visible=false end
         if CFG.healthESP then
-            local hp=math.clamp(hum.Health,0,hum.MaxHealth)
-            local ratio=hum.MaxHealth>0 and hp/hum.MaxHealth or 0
+            local hp=0; local mhp=100
+            pcall(function() hp=hum.Health; mhp=hum.MaxHealth end)
+            hp=math.clamp(hp,0,mhp)
+            local ratio=mhp>0 and hp/mhp or 0
             local bw,bh=sz*1.5,4; local bx=sp.X-bw/2; local by=sp.Y+sz*1.2
             d.hbg.Size=Vector2.new(bw,bh); d.hbg.Position=Vector2.new(bx,by); d.hbg.Visible=true
             d.hbar.Size=Vector2.new(bw*ratio,bh); d.hbar.Position=Vector2.new(bx,by)
             d.hbar.Color=Color3.fromRGB(math.floor(255*(1-ratio)),math.floor(255*ratio),0); d.hbar.Visible=true
-            d.hlbl.Position=Vector2.new(sp.X,by+bh+1); d.hlbl.Text=string.format("%d/%d",math.floor(hp),math.floor(hum.MaxHealth))
+            d.hlbl.Position=Vector2.new(sp.X,by+bh+1); d.hlbl.Text=string.format("%d/%d",math.floor(hp),math.floor(mhp))
             d.hlbl.Size=math.clamp(sz*0.72,8,13); d.hlbl.Visible=true
         else d.hbg.Visible=false;d.hbar.Visible=false;d.hlbl.Visible=false end
     end
@@ -568,8 +581,10 @@ local function getBest()
     for _,p in ipairs(Players:GetPlayers()) do
         if p==LP or not isEnemy(p) then continue end
         local c=getChar(p); if not c then continue end
-        local part=c:FindFirstChild("Head") or getRoot(p); if not part then continue end
-        local hum=getHum(p); if not hum or hum.Health<=0 then continue end
+        local part=c:FindFirstChild("HitboxHead") or c:FindFirstChild("Head") or getRoot(p); if not part then continue end
+        local hum=getHum(p); if not hum then continue end
+        local humHp=0; pcall(function() humHp=hum.Health end)
+        if humHp<=0 then continue end
         if CFG.requireVisible and not isVisible(p) then continue end
         local sp,on,depth=w2s(part.Position); if not on or depth<0 then continue end
         local dist=(Vector2.new(sp.X,sp.Y)-center).Magnitude
@@ -578,12 +593,27 @@ local function getBest()
     return bestP
 end
 
+local aimbotActive = false
+
 local function doAimbot()
-    if not CFG.aimbot then return end
-    if not UserInputService:IsKeyDown(BINDS.aimbot) then return end
-    local target=getBest(); if not target then return end
-    local smooth=math.clamp(1-CFG.smoothness,0.01,1)
-    Camera.CFrame=Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position,target.Position),smooth)
+    local want = CFG.aimbot and UserInputService:IsKeyDown(BINDS.aimbot)
+    if want then
+        local target = getBest()
+        if target then
+            if not aimbotActive then
+                Camera.CameraType = Enum.CameraType.Scriptable
+                aimbotActive = true
+            end
+            local smooth = math.clamp(1 - CFG.smoothness, 0.01, 1)
+            Camera.CFrame = Camera.CFrame:Lerp(
+                CFrame.new(Camera.CFrame.Position, target.Position), smooth)
+        end
+    else
+        if aimbotActive then
+            Camera.CameraType = Enum.CameraType.Custom
+            aimbotActive = false
+        end
+    end
 end
 
 -- ══════════════════════════════════
@@ -594,7 +624,9 @@ local function getNearestEnemy()
     for _,p in ipairs(Players:GetPlayers()) do
         if p==LP or not isEnemy(p) then continue end
         local root=getRoot(p); if not root then continue end
-        local hum=getHum(p); if not hum or hum.Health<=0 then continue end
+        local hum=getHum(p); if not hum then continue end
+        local nearHp=0; pcall(function() nearHp=hum.Health end)
+        if nearHp<=0 then continue end
         local myRoot=LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
         if not myRoot then continue end
         local d=(myRoot.Position-root.Position).Magnitude
@@ -609,7 +641,9 @@ RunService.Heartbeat:Connect(function()
     local myRoot=LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
     local eRoot=getRoot(target)
     if not myRoot or not eRoot then return end
-    local hum=getHum(target); if not hum or hum.Health<=0 then return end
+    local hum=getHum(target)
+    local tpHp=0; if hum then pcall(function() tpHp=hum.Health end) end
+    if tpHp<=0 then return end
     myRoot.CFrame=CFrame.new(eRoot.Position+Vector3.new(0,6,0),eRoot.Position)
 end)
 
@@ -693,4 +727,4 @@ RunService.RenderStepped:Connect(function()
     fovCircle.Visible=CFG.showFOV and CFG.aimbot
 end)
 
-print("[RivalsHub] loaded — drag header | × close | F1 ESP | F2 Aimbot | F3 Misc | hold E lock")
+print("[RivalsHub] loaded v2 — HitboxHead targeting | drag header | × close | F1 ESP | F2 Aimbot | F3 Misc | hold E lock")
