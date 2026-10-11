@@ -286,7 +286,6 @@ local function secLbl(p,txt,ord)
     pad(8,14,0,14,fr)
     local l=lbl(string.upper(txt),9,FONTB,C.textMut,fr)
     anchor(l,0,1); l.Position=UDim2.new(0,0,1,0)
-    l.LetterSpacing = 1
 end
 
 local function toggleRow(p,name,sub,key,ord)
@@ -358,8 +357,14 @@ local function sliderRow(p,name,key,min,max,dp,ord)
     local fill=make("Frame",{Size=UDim2.new(ratio,0,1,0),BackgroundColor3=C.accent},track)
     corner(2,fill)
 
-    -- invisible drag region
-    local drag=make("TextButton",{Size=UDim2.new(1,0,0,18),BackgroundTransparency=1,Text="",Position=UDim2.new(0,0,0,-8)},track)
+    -- drag region parented to track so UIListLayout can't move it
+    local drag=make("TextButton",{
+        Size=UDim2.new(1,0,0,22),
+        Position=UDim2.new(0,0,0.5,0),
+        AnchorPoint=Vector2.new(0,0.5),
+        BackgroundTransparency=1,
+        Text="",
+    },track)
     local held=false
     local function setV(x)
         local r=math.clamp(x/track.AbsoluteSize.X,0,1)
