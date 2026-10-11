@@ -6,10 +6,12 @@ local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService     = game:GetService("TweenService")
 local CAS              = game:GetService("ContextActionService")
-local Camera           = workspace.CurrentCamera
+local Camera           = game:GetService("Workspace").CurrentCamera
 local LP               = Players.LocalPlayer
 local Mouse            = LP:GetMouse()
 local ESC_ACTION       = "RivalsHub_ESC"
+-- fix workspace ref supaya executor environment tak reject
+local workspace        = game:GetService("Workspace")
 
 -- ══════════════════════════════════
 --  SHARED CFG
@@ -116,15 +118,32 @@ local BODY_H  = WIN_H - HDR_H - FTR_H  -- 358
 -- ══════════════════════════════════
 --  BUILD GUI
 -- ══════════════════════════════════
--- gethui() parents to a protected CoreGui container that Roblox's ESC
--- menu cannot reach. Falls back to PlayerGui on executors that expose it
--- directly (rare) — panel may then hide on ESC in that case.
-local safeGui = (typeof(gethui) == "function" and gethui())
-             or game:GetService("CoreGui")
+-- cuba semua cara parent GUI — gethui > CoreGui > PlayerGui
+local safeGui
+if typeof(gethui) == "function" then
+    local ok, h = pcall(gethui)
+    if ok and h then safeGui = h end
+end
+if not safeGui then
+    local ok, h = pcall(function() return game:GetService("CoreGui") end)
+    if ok and h then safeGui = h end
+end
+if not safeGui then
+    safeGui = LP.PlayerGui
+end
+print("[RivalsHub] parenting ke: " .. tostring(safeGui))
 
 -- remove any stale instance from a previous execute
-local old = safeGui:FindFirstChild("RivalsHub")
-if old then old:Destroy() end
+for _, loc in ipairs({
+    LP.PlayerGui,
+    game:GetService("CoreGui"),
+    typeof(gethui) == "function" and (pcall(gethui) and gethui() or nil) or nil
+}) do
+    if loc then
+        local old = loc:FindFirstChild("RivalsHub")
+        if old then old:Destroy() end
+    end
+end
 
 local gui = make("ScreenGui", {
     Name           = "RivalsHub",
@@ -925,7 +944,7 @@ local function getBest()
 end
 
 -- grab semua _muzzle attachments dari ViewModels folder
-local ViewModels = workspace:FindFirstChild("ViewModels")
+local ViewModels = game:GetService("Workspace"):FindFirstChild("ViewModels")
 local _muzzleStored = {}
 
 local function getMuzzleAttachments()
