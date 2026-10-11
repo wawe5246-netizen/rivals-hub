@@ -812,29 +812,30 @@ local function getHead(p)
     return c and (c:FindFirstChild("HitboxHead") or c:FindFirstChild("Head"))
 end
 
--- colours: enemy = red, teammate = blue
-local ESP_ENEMY_FILL    = Color3.fromRGB(220, 40,  40)
-local ESP_ENEMY_OUTLINE = Color3.fromRGB(255, 100, 100)
-local ESP_TEAM_FILL     = Color3.fromRGB(40,  100, 220)
-local ESP_TEAM_OUTLINE  = Color3.fromRGB(100, 160, 255)
-local ESP_ENEMY_NAME    = Color3.fromRGB(255, 80,  80)
-local ESP_TEAM_NAME     = Color3.fromRGB(80,  160, 255)
+local ESP_COL = {
+    enemyFill    = Color3.fromRGB(220, 40,  40),
+    enemyOutline = Color3.fromRGB(255, 100, 100),
+    teamFill     = Color3.fromRGB(40,  100, 220),
+    teamOutline  = Color3.fromRGB(100, 160, 255),
+    enemyName    = Color3.fromRGB(255, 80,  80),
+    teamName     = Color3.fromRGB(80,  160, 255),
+}
 
 local function applyHL(p)
     local c = getChar(p); if not c then return end
-    -- kalau dah ada, update colour je (team boleh tukar mid-game)
+    -- reuse existing highlight, update colour setiap call (team boleh tukar)
     local h = c:FindFirstChild(HL_NAME)
     if not h then
-        h = Instance.new("Highlight")
-        h.Name    = HL_NAME
-        h.Adornee = c
-        h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        h.Parent  = c
+        h             = Instance.new("Highlight")
+        h.Name        = HL_NAME
+        h.Adornee     = c
+        h.DepthMode   = Enum.HighlightDepthMode.AlwaysOnTop
+        h.Parent      = c
     end
-    local enemy = isEnemy(p)
-    h.FillColor           = enemy and ESP_ENEMY_FILL    or ESP_TEAM_FILL
+    local enemy           = isEnemy(p)
+    h.FillColor           = enemy and ESP_COL.enemyFill    or ESP_COL.teamFill
     h.FillTransparency    = 0.5
-    h.OutlineColor        = enemy and ESP_ENEMY_OUTLINE or ESP_TEAM_OUTLINE
+    h.OutlineColor        = enemy and ESP_COL.enemyOutline or ESP_COL.teamOutline
     h.OutlineTransparency = 0
 end
 local function removeHL(p)
@@ -884,7 +885,7 @@ local function updateDrawESP()
             d.name.Position = Vector2.new(sp.X, sp.Y - sz*1.7)
             d.name.Text     = p.Name
             d.name.Size     = sz
-            d.name.Color    = isEnemy(p) and ESP_ENEMY_NAME or ESP_TEAM_NAME
+            d.name.Color    = isEnemy(p) and ESP_COL.enemyName or ESP_COL.teamName
             d.name.Visible  = true
         else d.name.Visible = false end
         if CFG.healthESP then
@@ -907,9 +908,8 @@ end
 local function syncHL()
     for _, p in ipairs(Players:GetPlayers()) do
         if p == LP then continue end
-        -- highlight semua player bila ESP on, warna ikut team/enemy
         if CFG.highlightESP and getChar(p) then
-            applyHL(p)
+            applyHL(p)   -- colour ikut team/enemy dalam applyHL
         else
             removeHL(p)
         end
@@ -932,80 +932,97 @@ Camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
 end)
 
 -- ══════════════════════════════════
---  AIMBOT — muzzle redirect + camera
---  Rivals fires dari muzzle attachment WorldPosition + WorldCFrame LookVector
---  Camera lock je tak cukup sebab weapon ada procedural sway/bob on top
---  Fix: redirect _muzzle attachment CFrame terus ke target + camera sekali
+--  AIMBOT — confirmed structure dari probe output
+--
+--  target   : HitboxHead (Part, parent = character model e.g. "Reyo1706")
+--  muzzle   : _muzzle Attachment, parent = BodyPrimary
+--             BodyPrimary ada dalam active weapon Model dalam ViewModels
+--  active VM: cari Model dalam ViewModels yang ada BodyPrimary
+--             (ada _aim_lookat, _muzzle etc — bukan _boundingbox-only models)
+--
+--  JANGAN sentuh Camera.CameraType — Rivals reset dia tiap frame
+--  camera lock = lerp Camera.CFrame je
 -- ══════════════════════════════════
-local function isVisible(p)
-    local head = getHead(p); if not head then return false end
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Blacklist
-    params.FilterDescendantsInstances = {LP.Character, getChar(p)}
-    params.IgnoreWater = true
-    local origin = Camera.CFrame.Position
-    local result = workspace:Raycast(origin, head.Position - origin, params)
-    return result == nil or result.Instance:IsDescendantOf(getChar(p))
+
+local PRED_FACTOR = 0.065   -- velocity lead, tune ikut ping
+local ViewModels  = workspace:FindFirstChild("ViewModels")
+
+-- ambil BodyPrimary dari active weapon (model yang ada _muzzle dalam ViewModels)
+local function getActiveBodyPrimary()
+    if not ViewModels then return nil end
+    for _, model in ipairs(ViewModels:GetChildren()) do
+        if not model:IsA("Model") then continue end
+        local bp = model:FindFirstChild("BodyPrimary")
+        if bp and bp:FindFirstChild("_muzzle") then
+            return bp
+        end
+    end
+    return nil
 end
 
-local PRED_FACTOR = 0.07  -- lead multiplier, tune ikut ping
+local function getMuzzle()
+    local bp = getActiveBodyPrimary()
+    if not bp then return nil end
+    return bp:FindFirstChild("_muzzle")
+end
+
+local function isVisible(p)
+    -- HitboxHead confirmed ada dalam character
+    local c = getChar(p); if not c then return false end
+    local head = c:FindFirstChild("HitboxHead") or c:FindFirstChild("Head")
+    if not head then return false end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = {LP.Character or {}, c}
+    params.IgnoreWater = true
+    local origin = Camera.CFrame.Position
+    local dir    = head.Position - origin
+    local result = workspace:Raycast(origin, dir, params)
+    return result == nil or result.Instance:IsDescendantOf(c)
+end
 
 local function getBest()
     local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
-    -- guna CFG.fovRadius supaya slider FOV dalam UI affect aimbot
     local bestD, bestP = CFG.fovRadius, nil
     for _, p in ipairs(Players:GetPlayers()) do
         if p == LP or not isEnemy(p) then continue end
         local c = getChar(p); if not c then continue end
-        local part = c:FindFirstChild("HitboxHead") or c:FindFirstChild("Head") or getRoot(p)
+        -- HitboxHead confirmed: parent = character model (username string)
+        local part = c:FindFirstChild("HitboxHead") or c:FindFirstChild("Head")
         if not part then continue end
         local hum = getHum(p); if not hum then continue end
-        local humHp = 0; pcall(function() humHp = hum.Health end)
-        if humHp <= 0 then continue end
+        local hp = 0; pcall(function() hp = hum.Health end)
+        if hp <= 0 then continue end
         if CFG.requireVisible and not isVisible(p) then continue end
-        -- predict position ikut velocity
+        -- predict ikut velocity
         local root = getRoot(p)
-        local vel  = root and root.AssemblyLinearVelocity or Vector3.zero
+        local vel  = (root and pcall(function() return root.AssemblyLinearVelocity end))
+                     and root.AssemblyLinearVelocity or Vector3.zero
         local pred = part.Position + vel * PRED_FACTOR
         local sp, on, depth = w2s(pred)
         if not on or depth < 0 then continue end
         local dist = (Vector2.new(sp.X, sp.Y) - center).Magnitude
-        if dist < bestD then bestD = dist; bestP = { part = part, pos = pred, player = p } end
+        if dist < bestD then
+            bestD = dist
+            bestP = { part = part, player = p, pred = pred }
+        end
     end
     return bestP
 end
 
--- grab semua _muzzle attachments dari ViewModels folder
-local ViewModels = game:GetService("Workspace"):FindFirstChild("ViewModels")
-local _muzzleStored = {}
-
-local function getMuzzleAttachments()
-    local found = {}
-    if not ViewModels then return found end
-    for _, d in ipairs(ViewModels:GetDescendants()) do
-        if d.Name == "_muzzle" and d:IsA("Attachment") then
-            table.insert(found, d)
-        end
-    end
-    return found
-end
-
-local aimbotActive  = false
--- lockedTarget = { part = BasePart, player = Player }
--- simpan player ref terus — avoid re-deriving dari part.Parent tiap frame
-local lockedTarget  = nil
+-- lockedTarget = { part, player, pred }
+local lockedTarget   = nil
+local muzzleOriginal = nil   -- simpan CFrame asal _muzzle sebelum redirect
 
 local function targetValid(entry)
     if not entry then return false end
-    local part = entry.part
-    local p    = entry.player
-    -- part masih exist dan masih dalam character yang sama
-    if not part or not part.Parent then return false end
-    -- player masih dalam game
+    local p = entry.player
     if not p or not p.Parent then return false end
-    -- masih enemy
     if not isEnemy(p) then return false end
-    -- masih hidup
+    local c = getChar(p); if not c then return false end
+    -- part masih dalam character yang sama
+    if not entry.part or not entry.part.Parent then return false end
+    if entry.part.Parent ~= c then return false end
     local hum = getHum(p); if not hum then return false end
     local hp = 0; pcall(function() hp = hum.Health end)
     return hp > 0
@@ -1013,75 +1030,57 @@ end
 
 local function doAimbot()
     local want = CFG.aimbot and isHeld(BINDS.aimbot)
+
     if want then
-        -- validate existing lock — guna player ref, tak re-derive dari part.Parent
+        -- validate lock
         if lockedTarget and not targetValid(lockedTarget) then
             lockedTarget = nil
         end
-
-        -- kalau takde locked target, cari yang baru
+        -- cari target baru kalau takde
         if not lockedTarget then
-            local t = getBest()
-            -- simpan { part, player } terus
-            if t then lockedTarget = { part = t.part, player = t.player } end
+            lockedTarget = getBest()
         end
 
         if lockedTarget then
-            local smooth = math.clamp(CFG.smoothness, 0.05, 1)
-
-            -- predict position ikut velocity
+            -- update predicted pos tiap frame (target bergerak)
             local root = getRoot(lockedTarget.player)
-            local vel  = root and root.AssemblyLinearVelocity or Vector3.zero
+            local vel  = Vector3.zero
+            if root then pcall(function() vel = root.AssemblyLinearVelocity end) end
             local targetPos = lockedTarget.part.Position + vel * PRED_FACTOR
 
-            -- cek ada weapon equipped tak — kalau takde muzzle, dalam lobby
-            local muzzles = getMuzzleAttachments()
-            local inGame  = #muzzles > 0
+            local smooth = math.clamp(CFG.smoothness, 0.04, 1)
 
-            if inGame then
-                -- dalam game: redirect muzzle + camera
-                if not aimbotActive then
-                    Camera.CameraType = Enum.CameraType.Scriptable
-                    aimbotActive      = true
-                end
+            -- 1) camera lerp — JANGAN tukar CameraType, Rivals reset dia
+            local newCF = CFrame.new(Camera.CFrame.Position, targetPos)
+            Camera.CFrame = Camera.CFrame:Lerp(newCF, smooth)
 
-                -- 1) redirect camera
-                Camera.CFrame = Camera.CFrame:Lerp(
-                    CFrame.new(Camera.CFrame.Position, targetPos), smooth)
-
-                -- 2) redirect setiap _muzzle attachment
-                for _, att in ipairs(muzzles) do
-                    if not _muzzleStored[att] then
-                        _muzzleStored[att] = att.CFrame
-                    end
-                    local origin = att.WorldPosition
-                    local dir    = (targetPos - origin).Unit
-                    local parent = att.Parent
-                    if parent and parent:IsA("BasePart") then
-                        local wCF = CFrame.lookAt(origin, origin + dir)
-                        pcall(function()
-                            att.CFrame = parent.CFrame:ToObjectSpace(wCF)
-                        end)
-                    end
+            -- 2) muzzle redirect — BodyPrimary._muzzle ke target
+            local muzzle = getMuzzle()
+            if muzzle and muzzle.Parent and muzzle.Parent:IsA("BasePart") then
+                local bp     = muzzle.Parent   -- BodyPrimary
+                -- simpan original sekali
+                if not muzzleOriginal then
+                    muzzleOriginal = muzzle.CFrame
                 end
-            else
-                -- lobby: camera redirect je, tak kacau weapon
-                if aimbotActive then
-                    Camera.CameraType = Enum.CameraType.Custom
-                    aimbotActive = false
-                end
+                local origin  = bp.CFrame * muzzle.CFrame.Position
+                local dir     = (targetPos - origin).Unit
+                -- CFrame dalam object space of BodyPrimary
+                local worldAim = CFrame.lookAt(origin, origin + dir)
+                pcall(function()
+                    muzzle.CFrame = bp.CFrame:ToObjectSpace(worldAim)
+                end)
             end
         end
+
     else
-        -- lepas key — reset semua
+        -- key released — restore muzzle, clear lock
         lockedTarget = nil
-        for att, cf in pairs(_muzzleStored) do
-            pcall(function() att.CFrame = cf end)
-        end
-        _muzzleStored = {}
-        if aimbotActive then
-            Camera.CameraType = Enum.CameraType.Custom
-            aimbotActive      = false
+        if muzzleOriginal then
+            local muzzle = getMuzzle()
+            if muzzle then
+                pcall(function() muzzle.CFrame = muzzleOriginal end)
+            end
+            muzzleOriginal = nil
         end
     end
 end
@@ -1167,16 +1166,13 @@ UserInputService.InputBegan:Connect(function(inp, gpe)
     if bindMatches(BINDS.aimbotToggle, inp) then
         CFG.aimbot = not CFG.aimbot
         fovCircle.Visible = CFG.showFOV and CFG.aimbot
-        -- restore muzzle CFrames bila toggle off supaya weapon balik normal
         if not CFG.aimbot then
+            -- restore muzzle dan clear lock
             lockedTarget = nil
-            for att, cf in pairs(_muzzleStored) do
-                pcall(function() att.CFrame = cf end)
-            end
-            _muzzleStored = {}
-            if aimbotActive then
-                Camera.CameraType = Enum.CameraType.Custom
-                aimbotActive = false
+            if muzzleOriginal then
+                local muzzle = getMuzzle()
+                if muzzle then pcall(function() muzzle.CFrame = muzzleOriginal end) end
+                muzzleOriginal = nil
             end
         end
     end
