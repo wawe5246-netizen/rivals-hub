@@ -826,8 +826,12 @@ local function destroyDrawESP(p)
 end
 
 local function w2s(pos)
-    local sp, on = Camera:WorldToViewportPoint(pos)
-    return Vector2.new(sp.X, sp.Y), on, sp.Z
+    -- WorldToViewportPoint returns Vector3 in most executors (not sp,on,depth)
+    -- sp.Z > 0 means in front of camera = on screen
+    local sp = Camera:WorldToViewportPoint(pos)
+    local depth = sp.Z
+    local onScreen = depth > 0
+    return Vector2.new(sp.X, sp.Y), onScreen, depth
 end
 
 local function updateDrawESP()
@@ -901,6 +905,10 @@ local function isVisible(p)
     return result == nil or result.Instance:IsDescendantOf(getChar(p))
 end
 
+-- velocity history per part — used for one-frame prediction
+-- key: BasePart, value: Vector3 last world position
+local lastPos = {}
+
 local function getBest()
     local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
     local bestD, bestP = CFG.fovRadius, nil
@@ -921,26 +929,110 @@ local function getBest()
     return bestP
 end
 
+-- spring state — carries over between frames for smooth continuity
+-- currentCF: where the camera is right now (our smoothed value)
+-- velocity:  angular velocity Vector3 in world space (spring damping)
+local springCF  = nil   -- CFrame — initialised on first lock
+local springVel = Vector3.new(0, 0, 0)
+
 local aimbotActive = false
-local function doAimbot()
+
+local function doAimbot(dt)
     local want = CFG.aimbot and isHeld(BINDS.aimbot)
-    if want then
-        local target = getBest()
-        if target then
-            if not aimbotActive then
-                Camera.CameraType = Enum.CameraType.Scriptable
-                aimbotActive      = true
-            end
-            local smooth = math.clamp(1 - CFG.smoothness, 0.01, 1)
-            Camera.CFrame = Camera.CFrame:Lerp(
-                CFrame.new(Camera.CFrame.Position, target.Position), smooth)
-        end
-    else
+    if not want then
         if aimbotActive then
             Camera.CameraType = Enum.CameraType.Custom
             aimbotActive      = false
+            springCF          = nil
+            springVel         = Vector3.new(0, 0, 0)
+        end
+        return
+    end
+
+    local target = getBest()
+    if not target then
+        -- no target in FOV — release camera so sway feels natural
+        if aimbotActive then
+            Camera.CameraType = Enum.CameraType.Custom
+            aimbotActive      = false
+            springCF          = nil
+            springVel         = Vector3.new(0, 0, 0)
+        end
+        return
+    end
+
+    -- only take camera scriptable when in normal gameplay (Custom type)
+    -- lobby uses Orbital/Track — taking Scriptable there causes spin
+    if not aimbotActive then
+        if Camera.CameraType ~= Enum.CameraType.Custom then return end
+        Camera.CameraType = Enum.CameraType.Scriptable
+        aimbotActive      = true
+        springCF          = Camera.CFrame
+        springVel         = Vector3.new(0, 0, 0)
+    end
+
+    -- ── velocity prediction ────────────────────────────────
+    -- extrapolate target position one frame forward to pre-aim
+    -- against movement, cancelling the lag that makes it look jittery
+    local worldPos   = target.Position
+    local prevPos    = lastPos[target]
+    local predicted  = worldPos
+    if prevPos then
+        -- clamp extrapolation — don't chase teleports
+        local vel = worldPos - prevPos
+        if vel.Magnitude < 8 then          -- >8 studs/frame = teleport, skip
+            predicted = worldPos + vel     -- one frame ahead
         end
     end
+    lastPos[target] = worldPos
+
+    -- ── spring lerp ───────────────────────────────────────
+    -- stiffness / damping tuned so smoothness slider feels right:
+    --   smoothness 0.0 → near-instant snap (stiffness high)
+    --   smoothness 1.0 → very loose follow
+    -- formula: critically damped spring  x'' = -k(x-target) - c*x'
+    local stiffness = math.clamp(1 - CFG.smoothness, 0.04, 1) * 28   -- 1.12 → 28
+    local damping   = 2 * math.sqrt(stiffness) * 0.85                 -- slightly under-damped for feel
+
+    -- desired CFrame: look from camera origin toward predicted head
+    local camPos    = springCF.Position
+    local desiredCF = CFrame.new(camPos, predicted)
+
+    -- decompose rotation error into axis-angle, apply spring force
+    local errorCF   = springCF:Inverse() * desiredCF
+    local axis, ang = errorCF:ToAxisAngle()
+    -- world-space angular displacement
+    local disp      = springCF:VectorToWorldSpace(axis * ang)
+
+    -- spring acceleration
+    local accel     = disp * stiffness - springVel * damping
+    springVel       = springVel + accel * dt
+
+    -- clamp angular speed to prevent overshoot on huge initial error
+    local maxSpeed  = math.rad(720)   -- 720 deg/s max
+    if springVel.Magnitude > maxSpeed then
+        springVel = springVel.Unit * maxSpeed
+    end
+
+    -- integrate
+    local deltaAngle = springVel * dt
+    if deltaAngle.Magnitude > 0.0001 then
+        local rotAxis = deltaAngle.Unit
+        local rotAng  = deltaAngle.Magnitude
+        springCF = CFrame.new(camPos)
+            * CFrame.fromAxisAngle(
+                springCF:VectorToObjectSpace(rotAxis), rotAng)
+            * CFrame.new(0, 0, 0,
+                springCF.RightVector.X, springCF.RightVector.Y, springCF.RightVector.Z,
+                springCF.UpVector.X,    springCF.UpVector.Y,    springCF.UpVector.Z,
+                -springCF.LookVector.X,-springCF.LookVector.Y, -springCF.LookVector.Z)
+    end
+
+    -- final: look at predicted from current camera position, blended
+    -- we re-derive from camPos so position never drifts
+    local finalDir = (springCF.LookVector).Unit
+    Camera.CFrame  = CFrame.new(Camera.CFrame.Position,
+        Camera.CFrame.Position + finalDir)
 end
 
 -- ══════════════════════════════════
@@ -1036,20 +1128,37 @@ end)
 -- ══════════════════════════════════
 local function hookPlayer(p)
     p.CharacterAdded:Connect(function()
-        task.wait(0.15); destroyDrawESP(p); removeHL(p)
+        task.wait(0.15)
+        destroyDrawESP(p)
+        removeHL(p)
+        -- clear velocity prediction cache for this player's parts
+        -- so spring doesn't inherit stale pre-respawn velocity
+        local c = p.Character
+        if c then
+            for _, part in ipairs(c:GetDescendants()) do
+                if part:IsA("BasePart") then lastPos[part] = nil end
+            end
+        end
     end)
 end
 for _, p in ipairs(Players:GetPlayers()) do if p ~= LP then hookPlayer(p) end end
 Players.PlayerAdded:Connect(hookPlayer)
-Players.PlayerRemoving:Connect(function(p) destroyDrawESP(p); removeHL(p) end)
+Players.PlayerRemoving:Connect(function(p)
+    destroyDrawESP(p)
+    removeHL(p)
+    local c = p.Character
+    if c then
+        for _, part in ipairs(c:GetDescendants()) do lastPos[part] = nil end
+    end
+end)
 
 -- ══════════════════════════════════
 --  MAIN LOOP
 -- ══════════════════════════════════
-RunService.RenderStepped:Connect(function()
+RunService.RenderStepped:Connect(function(_, dt)
     syncHL()
     updateDrawESP()
-    doAimbot()
+    doAimbot(dt)
     fovCircle.Radius  = CFG.fovRadius
     fovCircle.Visible = CFG.showFOV and CFG.aimbot
 end)
