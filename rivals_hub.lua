@@ -73,7 +73,20 @@ local function lbl(txt,fs,font,col,p)
     return make("TextLabel",{Text=txt,TextSize=fs,Font=font,TextColor3=col,BackgroundTransparency=1,AutomaticSize=Enum.AutomaticSize.XY},p)
 end
 local function tw(o,t,props) TweenService:Create(o,TweenInfo.new(t,Enum.EasingStyle.Quad),props):Play() end
-local function sep(p) make("Frame",{Size=UDim2.new(1,0,0,0.5),Position=UDim2.new(0,0,1,-0.5),BackgroundColor3=C.border,BorderSizePixel=0},p) end
+local function anchor(o,ax,ay) o.AnchorPoint=Vector2.new(ax,ay) end
+
+-- FIX 3: sep as absolute-positioned 1px bottom divider, safe outside ListLayout
+local function sep(parent)
+    local s = make("Frame",{
+        Size             = UDim2.new(1,0,0,1),
+        AnchorPoint      = Vector2.new(0,1),
+        Position         = UDim2.new(0,0,1,0),
+        BackgroundColor3 = C.border,
+        BorderSizePixel  = 0,
+        ZIndex           = 2,
+    }, parent)
+    return s
+end
 
 -- ══════════════════════════════════
 --  BUILD GUI
@@ -94,36 +107,55 @@ UserInputService.InputChanged:Connect(function(i)
     end
 end)
 
--- header
-local hdr=make("Frame",{Size=UDim2.new(1,0,0,44),BackgroundColor3=C.surface},win) corner(14,hdr)
+-- FIX 1: header — single title label, no ghost duplicate
+local hdr = make("Frame",{Size=UDim2.new(1,0,0,44),BackgroundColor3=C.surface},win)
+corner(14,hdr)
 make("Frame",{Size=UDim2.new(1,0,0,14),Position=UDim2.new(0,0,1,-14),BackgroundColor3=C.surface,BorderSizePixel=0},hdr)
-lbl("rivals hub",14,FONT,C.textPri,hdr).Position=UDim2.new(0,16,0.5,0)
-local function anchor(o,ax,ay) o.AnchorPoint=Vector2.new(ax,ay) end
-local titleLbl=lbl("rivals hub",14,FONT,C.textPri,hdr); anchor(titleLbl,0,0.5); titleLbl.Position=UDim2.new(0,16,0.5,0)
 
-local badgeFr=make("Frame",{Size=UDim2.new(0,40,0,20),BackgroundColor3=C.accentBg},hdr)
+local titleLbl = lbl("rivals hub",14,FONT,C.textPri,hdr)
+anchor(titleLbl,0,0.5); titleLbl.Position=UDim2.new(0,16,0.5,0)
+
+local badgeFr = make("Frame",{Size=UDim2.new(0,40,0,20),BackgroundColor3=C.accentBg},hdr)
 corner(10,badgeFr); anchor(badgeFr,1,0.5); badgeFr.Position=UDim2.new(1,-52,0.5,0)
-local badgeLbl=lbl("live",11,FONTB,C.accent,badgeFr)
+local badgeLbl = lbl("live",11,FONTB,C.accent,badgeFr)
 badgeLbl.Size=UDim2.new(1,0,1,0); badgeLbl.TextXAlignment=Enum.TextXAlignment.Center
 
-local closeBtn=make("TextButton",{Size=UDim2.new(0,20,0,20),BackgroundTransparency=1,Text="×",TextSize=18,Font=FONTB,TextColor3=C.textSec},hdr)
+local closeBtn = make("TextButton",{Size=UDim2.new(0,20,0,20),BackgroundTransparency=1,Text="×",TextSize=18,Font=FONTB,TextColor3=C.textSec},hdr)
 anchor(closeBtn,1,0.5); closeBtn.Position=UDim2.new(1,-10,0.5,0)
 closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
 
--- tab bar
-local tabBar=make("Frame",{Size=UDim2.new(1,0,0,34),Position=UDim2.new(0,0,0,44),BackgroundColor3=C.surface,BorderSizePixel=0},win)
+-- FIX 4 & 5: tab bar with sliding accent underline
+local tabBar = make("Frame",{Size=UDim2.new(1,0,0,34),Position=UDim2.new(0,0,0,44),BackgroundColor3=C.surface,BorderSizePixel=0,ClipsDescendants=false},win)
 make("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,SortOrder=Enum.SortOrder.LayoutOrder},tabBar)
-make("Frame",{Size=UDim2.new(1,0,0,0.5),Position=UDim2.new(0,0,1,0),BackgroundColor3=C.border,BorderSizePixel=0},tabBar)
+make("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,1,0),BackgroundColor3=C.border,BorderSizePixel=0},tabBar)
 
-local body=make("ScrollingFrame",{Size=UDim2.new(1,0,1,-78),Position=UDim2.new(0,0,0,78),BackgroundTransparency=1,ScrollBarThickness=0,CanvasSize=UDim2.new(0,0,0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y},win)
+-- sliding underline indicator
+local tabUnderline = make("Frame",{
+    Size             = UDim2.new(0.25,0,0,2),
+    Position         = UDim2.new(0,0,1,-2),
+    BackgroundColor3 = C.accent,
+    BorderSizePixel  = 0,
+    ZIndex           = 3,
+},tabBar)
+
+-- FIX 2: body height accounts for header(44) + tabBar(34) + statusBar(28) = 106
+local body = make("ScrollingFrame",{
+    Size                  = UDim2.new(1,0,1,-106),
+    Position              = UDim2.new(0,0,0,78),
+    BackgroundTransparency = 1,
+    ScrollBarThickness    = 0,
+    CanvasSize            = UDim2.new(0,0,0,0),
+    AutomaticCanvasSize   = Enum.AutomaticSize.Y,
+    ClipsDescendants      = true,
+},win)
 
 -- status
-local statusBar=make("Frame",{Size=UDim2.new(1,0,0,28),BackgroundColor3=C.surface},win)
+local statusBar = make("Frame",{Size=UDim2.new(1,0,0,28),BackgroundColor3=C.surface},win)
 corner(14,statusBar); anchor(statusBar,0,1); statusBar.Position=UDim2.new(0,0,1,0)
 make("Frame",{Size=UDim2.new(1,0,0,14),BackgroundColor3=C.surface,BorderSizePixel=0},statusBar)
-local dotFr=make("Frame",{Size=UDim2.new(0,6,0,6),BackgroundColor3=C.success},statusBar)
+local dotFr = make("Frame",{Size=UDim2.new(0,6,0,6),BackgroundColor3=C.success},statusBar)
 corner(3,dotFr); anchor(dotFr,0,0.5); dotFr.Position=UDim2.new(0,14,0.5,0)
-local statusLbl=lbl("all systems live",11,FONTS,C.textSec,statusBar)
+local statusLbl = lbl("all systems live",11,FONTS,C.textSec,statusBar)
 anchor(statusLbl,0,0.5); statusLbl.Position=UDim2.new(0,28,0.5,0)
 
 local function updateStatus()
@@ -138,17 +170,29 @@ local TABS={"ESP","Aimbot","Misc","Keybinds"}
 local panels,tabBtns={},{}
 
 for i,name in ipairs(TABS) do
-    local btn=make("TextButton",{Size=UDim2.new(0.25,0,1,0),BackgroundColor3=i==1 and C.bg or C.surface,Text=name,TextSize=12,Font=FONT,TextColor3=i==1 and C.textPri or C.textSec,LayoutOrder=i,BorderSizePixel=0},tabBar)
+    local btn = make("TextButton",{
+        Size             = UDim2.new(0.25,0,1,0),
+        BackgroundColor3 = C.surface,
+        Text             = name,
+        TextSize         = 12,
+        Font             = FONT,
+        TextColor3       = i==1 and C.textPri or C.textSec,
+        LayoutOrder      = i,
+        BorderSizePixel  = 0,
+    },tabBar)
     tabBtns[name]=btn
-    local panel=make("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundTransparency=1,Visible=i==1},body)
+
+    local panel = make("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundTransparency=1,Visible=i==1},body)
     pad(12,14,14,14,panel)
     make("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,0)},panel)
     panels[name]=panel
+
     btn.MouseButton1Click:Connect(function()
         for _,n in ipairs(TABS) do
             tabBtns[n].TextColor3=C.textSec; tabBtns[n].BackgroundColor3=C.surface; panels[n].Visible=false
         end
-        btn.TextColor3=C.textPri; btn.BackgroundColor3=C.bg; panel.Visible=true
+        btn.TextColor3=C.textPri; btn.BackgroundColor3=C.surface; panel.Visible=true
+        tw(tabUnderline,0.12,{Position=UDim2.new((i-1)*0.25,0,1,-2)})
     end)
 end
 
@@ -160,17 +204,38 @@ local function secLbl(p,txt,ord)
     local l=lbl(string.upper(txt),10,FONTB,C.textMut,fr); anchor(l,0,1); l.Position=UDim2.new(0,0,1,0)
 end
 
+-- FIX 3 & 4: toggleRow — vertical layout, sep pinned to bottom, pill anchored right
 local function toggleRow(p,name,sub,key,ord)
-    local row=make("Frame",{Size=UDim2.new(1,0,0,44),BackgroundTransparency=1,LayoutOrder=ord},p)
-    make("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,VerticalAlignment=Enum.VerticalAlignment.Center},row)
-    sep(row)
-    local lf=make("Frame",{Size=UDim2.new(1,-48,1,0),BackgroundTransparency=1},row)
+    local row = make("Frame",{
+        Size                  = UDim2.new(1,0,0,44),
+        BackgroundTransparency = 1,
+        LayoutOrder           = ord,
+        ClipsDescendants      = false,
+    },p)
+
+    local inner = make("Frame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1},row)
+
+    local lf = make("Frame",{Size=UDim2.new(1,-56,1,0),BackgroundTransparency=1},inner)
     make("UIListLayout",{VerticalAlignment=Enum.VerticalAlignment.Center,Padding=UDim.new(0,2)},lf)
-    lbl(name,13,FONT,C.textPri,lf); if sub then lbl(sub,11,FONTS,C.textSec,lf) end
-    local pill=make("Frame",{Size=UDim2.new(0,36,0,20),BackgroundColor3=CFG[key] and C.accent or C.border},row)
+    lbl(name,13,FONT,C.textPri,lf)
+    if sub then lbl(sub,11,FONTS,C.textSec,lf) end
+
+    local pill = make("Frame",{
+        Size             = UDim2.new(0,36,0,20),
+        BackgroundColor3 = CFG[key] and C.accent or C.border,
+        AnchorPoint      = Vector2.new(1,0.5),
+        Position         = UDim2.new(1,-8,0.5,0),
+    },inner)
     corner(10,pill)
-    local thumb=make("Frame",{Size=UDim2.new(0,14,0,14),BackgroundColor3=C.on,Position=CFG[key] and UDim2.new(1,-17,0.5,0) or UDim2.new(0,3,0.5,0)},pill)
-    anchor(thumb,0,0.5); corner(7,thumb)
+    local thumb = make("Frame",{
+        Size             = UDim2.new(0,14,0,14),
+        BackgroundColor3 = C.on,
+        AnchorPoint      = Vector2.new(0,0.5),
+        Position         = CFG[key] and UDim2.new(1,-17,0.5,0) or UDim2.new(0,3,0.5,0),
+    },pill)
+    corner(7,thumb)
+    sep(row)
+
     pill.InputBegan:Connect(function(i)
         if i.UserInputType~=Enum.UserInputType.MouseButton1 then return end
         CFG[key]=not CFG[key]
