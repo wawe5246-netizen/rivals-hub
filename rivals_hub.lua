@@ -29,6 +29,8 @@ local CFG = {
     infJump        = false,
     noClip         = false,
     tpBehind       = false,
+    autoBurst      = false,  -- controlled M1 fire supaya heat tak overflow
+    burstInterval  = 0.12,   -- seconds between shots (tunable)
     smoothness     = 0.18,
     fovRadius      = 400,
 }
@@ -66,6 +68,8 @@ end
 
 local miscOn             = false
 local aimbotToggleActive = false  -- latch untuk toggle mode
+local autoBurstHeld      = false  -- M1 sedang ditekan
+local burstRunning       = false  -- loop aktif
 
 -- ══════════════════════════════════
 --  COLOUR TOKENS — warm amber redesign
@@ -789,6 +793,9 @@ toggleRow(panels.Misc, "Inf jump",   "jump anywhere",     "infJump", 3)
 secLbl(panels.Misc,    "combat",     4)
 toggleRow(panels.Misc, "No clip",    "pass through walls","noClip",  5)
 toggleRow(panels.Misc, "TP behind",  "loop tp near enemy","tpBehind",6)
+secLbl(panels.Misc,    "burst",      7)
+toggleRow(panels.Misc, "Auto burst", "heat-safe firerate","autoBurst",8)
+sliderRow(panels.Misc, "Burst gap",  "burstInterval", 0.06, 0.40, 2, 9)
 
 secLbl(panels.Keys,  "keybinds",       1)
 kbRow(panels.Keys, "Aimbot key",   "hold / toggle to lock", "aimbot",       2)
@@ -873,7 +880,7 @@ local function w2s(pos)
 end
 
 local function updateDrawESP()
-    for _, p in ipairs(Players:GetPlayers()) do
+    for _, p in ipairs(Players:GetPlayers() or {}) do
         if p == LP then continue end
         if not CFG.nameESP and not CFG.healthESP then destroyDrawESP(p); continue end
         if not isEnemy(p) then destroyDrawESP(p); continue end
@@ -908,7 +915,7 @@ local function updateDrawESP()
 end
 
 local function syncHL()
-    for _, p in ipairs(Players:GetPlayers()) do
+    for _, p in ipairs(Players:GetPlayers() or {}) do
         if p == LP then continue end
         if CFG.highlightESP and getChar(p) then
             applyHL(p)
@@ -969,7 +976,7 @@ local function getBest()
     local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
     local bestD, bestP = CFG.fovRadius, nil
 
-    for _, p in ipairs(Players:GetPlayers()) do
+    for _, p in ipairs(Players:GetPlayers() or {}) do
         if p == LP then continue end
         if not isEnemy(p) then continue end
         local c = getChar(p); if not c then continue end
@@ -1045,7 +1052,7 @@ end
 -- ══════════════════════════════════
 local function getNearestEnemy()
     local best, bestD = nil, math.huge
-    for _, p in ipairs(Players:GetPlayers()) do
+    for _, p in ipairs(Players:GetPlayers() or {}) do
         if p == LP or not isEnemy(p) then continue end
         local root = getRoot(p); if not root then continue end
         local hum  = getHum(p);  if not hum  then continue end
@@ -1115,7 +1122,7 @@ UserInputService.InputBegan:Connect(function(inp, gpe)
         CFG.nameESP      = CFG.highlightESP
         CFG.healthESP    = CFG.highlightESP
         if not CFG.highlightESP then
-            for _, p in ipairs(Players:GetPlayers()) do removeHL(p); destroyDrawESP(p) end
+            for _, p in ipairs(Players:GetPlayers() or {}) do removeHL(p); destroyDrawESP(p) end
         end
     end
     -- aimbot key: dalam toggle mode, press = flip latch
@@ -1137,6 +1144,51 @@ UserInputService.InputBegan:Connect(function(inp, gpe)
 end)
 
 -- ══════════════════════════════════
+--  AUTO-BURST
+--  intercept M1: press → wait holdTime → release → wait burstInterval → repeat
+--  supaya heat tak sempat overflow past accurate window
+--  requires executor globals mouse1press / mouse1release (KRNL/Synapse/Solara)
+-- ══════════════════════════════════
+local hasBurstAPI = typeof(mouse1press) == "function"
+                 and typeof(mouse1release) == "function"
+
+local function runAutoBurst()
+    burstRunning = true
+    while CFG.autoBurst and autoBurstHeld do
+        if hasBurstAPI then
+            pcall(mouse1press)
+            task.wait(0.04)   -- hold selama satu frame — cukup untuk register shot
+            pcall(mouse1release)
+        end
+        -- tunggu gap antara shots — ini yang control heat
+        task.wait(math.max(CFG.burstInterval, 0.06))
+    end
+    -- pastikan M1 released bila loop habis
+    if hasBurstAPI then pcall(mouse1release) end
+    burstRunning = false
+end
+
+UserInputService.InputBegan:Connect(function(i, gpe)
+    if gpe then return end
+    if i.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+    autoBurstHeld = true
+    if CFG.autoBurst and not burstRunning then
+        if hasBurstAPI then
+            task.spawn(runAutoBurst)
+        else
+            -- executor tak support mouse1press — warn sekali je
+            warn("[RivalsHub] auto-burst: executor ni tak support mouse1press/mouse1release")
+        end
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 then
+        autoBurstHeld = false
+    end
+end)
+
+-- ══════════════════════════════════
 --  PLAYER LIFECYCLE
 -- ══════════════════════════════════
 local function hookPlayer(p)
@@ -1144,7 +1196,7 @@ local function hookPlayer(p)
         task.wait(0.15); destroyDrawESP(p); removeHL(p)
     end)
 end
-for _, p in ipairs(Players:GetPlayers()) do if p ~= LP then hookPlayer(p) end end
+for _, p in ipairs(Players:GetPlayers() or {}) do if p ~= LP then hookPlayer(p) end end
 Players.PlayerAdded:Connect(hookPlayer)
 Players.PlayerRemoving:Connect(function(p) destroyDrawESP(p); removeHL(p) end)
 
