@@ -726,32 +726,40 @@ local function kbRow(p, name, sub, bkey, ord)
     anchor(kb, 0, 0.5); corner(5, kb); stroke(0.5, C.border2, kb)
 
     local listening = false
-    kb.MouseButton1Click:Connect(function()
-        if listening then
-            listening   = false
-            kb.Text     = bindName(BINDS[bkey])
-            kb.TextColor3 = C.textSec
-            tw(kb, 0.1, {BackgroundColor3 = C.surface})
-            return
-        end
-        listening     = true
-        kb.Text       = "..."
-        kb.TextColor3 = C.accent
-        tw(kb, 0.1, {BackgroundColor3 = C.accentBg})
-    end)
     UserInputService.InputBegan:Connect(function(i)
         if not listening then return end
-        local isKey   = i.UserInputType == Enum.UserInputType.Keyboard
-        local isMouse = i.UserInputType == Enum.UserInputType.MouseButton1
-                     or i.UserInputType == Enum.UserInputType.MouseButton2
-                     or i.UserInputType == Enum.UserInputType.MouseButton3
-        if not isKey and not isMouse then return end
+        local isKey    = i.UserInputType == Enum.UserInputType.Keyboard
+        local isM2     = i.UserInputType == Enum.UserInputType.MouseButton2
+        local isM3     = i.UserInputType == Enum.UserInputType.MouseButton3
+        -- M1 kena handle dekat InputEnded sebab klik button guna M1
+        -- tapi kalau bukan button kb sendiri yang diclik, capture terus
+        if not isKey and not isM2 and not isM3 then return end
         listening = false
-        if isKey then BINDS[bkey] = i.KeyCode
-                 else BINDS[bkey] = i.UserInputType end
+        if isKey then
+            BINDS[bkey] = i.KeyCode
+        else
+            BINDS[bkey] = i.UserInputType
+        end
         kb.Text       = bindName(BINDS[bkey])
         kb.TextColor3 = C.textSec
         tw(kb, 0.1, {BackgroundColor3 = C.surface})
+    end)
+    -- M1 captured bila button dilepas supaya tak conflict dengan click button itself
+    kb.MouseButton1Click:Connect(function()
+        if not listening then
+            -- start listen
+            listening     = true
+            kb.Text       = "..."
+            kb.TextColor3 = C.accent
+            tw(kb, 0.1, {BackgroundColor3 = C.accentBg})
+        else
+            -- second click = set to M1
+            listening         = false
+            BINDS[bkey]       = Enum.UserInputType.MouseButton1
+            kb.Text           = "M1"
+            kb.TextColor3     = C.textSec
+            tw(kb, 0.1, {BackgroundColor3 = C.surface})
+        end
     end)
 end
 
@@ -996,11 +1004,6 @@ local function doAimbot()
         end
 
         if lockedTarget then
-            if not aimbotActive then
-                Camera.CameraType = Enum.CameraType.Scriptable
-                aimbotActive      = true
-            end
-
             local smooth = math.clamp(CFG.smoothness, 0.05, 1)
 
             -- predict position ikut velocity
@@ -1008,24 +1011,41 @@ local function doAimbot()
             local vel  = root and root.AssemblyLinearVelocity or Vector3.zero
             local targetPos = lockedTarget.Position + vel * PRED_FACTOR
 
-            -- 1) redirect camera
-            Camera.CFrame = Camera.CFrame:Lerp(
-                CFrame.new(Camera.CFrame.Position, targetPos), smooth)
-
-            -- 2) redirect setiap _muzzle attachment
+            -- cek ada weapon equipped tak — kalau takde muzzle, dalam lobby
             local muzzles = getMuzzleAttachments()
-            for _, att in ipairs(muzzles) do
-                if not _muzzleStored[att] then
-                    _muzzleStored[att] = att.CFrame
+            local inGame  = #muzzles > 0
+
+            if inGame then
+                -- dalam game: redirect muzzle + camera
+                if not aimbotActive then
+                    Camera.CameraType = Enum.CameraType.Scriptable
+                    aimbotActive      = true
                 end
-                local origin = att.WorldPosition
-                local dir    = (targetPos - origin).Unit
-                local parent = att.Parent
-                if parent and parent:IsA("BasePart") then
-                    local wCF = CFrame.lookAt(origin, origin + dir)
-                    pcall(function()
-                        att.CFrame = parent.CFrame:ToObjectSpace(wCF)
-                    end)
+
+                -- 1) redirect camera
+                Camera.CFrame = Camera.CFrame:Lerp(
+                    CFrame.new(Camera.CFrame.Position, targetPos), smooth)
+
+                -- 2) redirect setiap _muzzle attachment
+                for _, att in ipairs(muzzles) do
+                    if not _muzzleStored[att] then
+                        _muzzleStored[att] = att.CFrame
+                    end
+                    local origin = att.WorldPosition
+                    local dir    = (targetPos - origin).Unit
+                    local parent = att.Parent
+                    if parent and parent:IsA("BasePart") then
+                        local wCF = CFrame.lookAt(origin, origin + dir)
+                        pcall(function()
+                            att.CFrame = parent.CFrame:ToObjectSpace(wCF)
+                        end)
+                    end
+                end
+            else
+                -- lobby: camera redirect je, tak kacau weapon
+                if aimbotActive then
+                    Camera.CameraType = Enum.CameraType.Custom
+                    aimbotActive = false
                 end
             end
         end
