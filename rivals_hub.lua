@@ -35,6 +35,31 @@ local BINDS = {
     misc         = Enum.KeyCode.F3,
 }
 
+-- bind helpers: BINDS slots hold either a KeyCode or a UserInputType (mouse buttons)
+local function isHeld(bind)
+    if typeof(bind) ~= "EnumItem" then return false end
+    if bind.EnumType == Enum.KeyCode then
+        return UserInputService:IsKeyDown(bind)
+    elseif bind.EnumType == Enum.UserInputType then
+        return UserInputService:IsMouseButtonPressed(bind)
+    end
+    return false
+end
+local function bindName(b)
+    if typeof(b) ~= "EnumItem" then return "?" end
+    if b.EnumType == Enum.KeyCode then return b.Name end
+    if b == Enum.UserInputType.MouseButton1 then return "M1" end
+    if b == Enum.UserInputType.MouseButton2 then return "M2" end
+    if b == Enum.UserInputType.MouseButton3 then return "M3" end
+    return b.Name
+end
+local function bindMatches(bind, inp)
+    if typeof(bind) ~= "EnumItem" then return false end
+    if bind.EnumType == Enum.KeyCode then return inp.KeyCode == bind end
+    if bind.EnumType == Enum.UserInputType then return inp.UserInputType == bind end
+    return false
+end
+
 local miscOn = false
 
 -- ══════════════════════════════════
@@ -395,7 +420,7 @@ local function kbRow(p,name,sub,bkey,ord)
     local kb=make("TextButton",{
         Size             = UDim2.new(0,52,0,24),
         BackgroundColor3 = C.card,
-        Text             = BINDS[bkey].Name,
+        Text             = bindName(BINDS[bkey]),
         TextSize         = 10,
         Font             = FONTB,
         TextColor3       = C.textSec,
@@ -417,10 +442,19 @@ local function kbRow(p,name,sub,bkey,ord)
     end)
     UserInputService.InputBegan:Connect(function(i)
         if not listening then return end
-        if i.UserInputType~=Enum.UserInputType.Keyboard then return end
-        listening=false; BINDS[bkey]=i.KeyCode
-        kb.Text=i.KeyCode.Name; kb.TextColor3=C.textSec
-        tw(kb,0.1,{BackgroundColor3=C.card})
+        local isKey   = i.UserInputType == Enum.UserInputType.Keyboard
+        local isMouse = i.UserInputType == Enum.UserInputType.MouseButton1
+                     or i.UserInputType == Enum.UserInputType.MouseButton2
+                     or i.UserInputType == Enum.UserInputType.MouseButton3
+        if not isKey and not isMouse then return end
+        listening = false
+        if isKey then
+            BINDS[bkey] = i.KeyCode
+        else
+            BINDS[bkey] = i.UserInputType
+        end
+        kb.Text = bindName(BINDS[bkey]); kb.TextColor3 = C.textSec
+        tw(kb, 0.1, {BackgroundColor3=C.card})
     end)
 end
 
@@ -596,7 +630,7 @@ end
 local aimbotActive = false
 
 local function doAimbot()
-    local want = CFG.aimbot and UserInputService:IsKeyDown(BINDS.aimbot)
+    local want = CFG.aimbot and isHeld(BINDS.aimbot)
     if want then
         local target = getBest()
         if target then
@@ -686,7 +720,7 @@ end)
 -- ══════════════════════════════════
 UserInputService.InputBegan:Connect(function(inp,gpe)
     if gpe then return end
-    if inp.KeyCode==BINDS.esp then
+    if bindMatches(BINDS.esp, inp) then
         CFG.highlightESP=not CFG.highlightESP
         CFG.nameESP=CFG.highlightESP
         CFG.healthESP=CFG.highlightESP
@@ -694,11 +728,11 @@ UserInputService.InputBegan:Connect(function(inp,gpe)
             for _,p in ipairs(Players:GetPlayers()) do removeHL(p); destroyDrawESP(p) end
         end
     end
-    if inp.KeyCode==BINDS.aimbotToggle then
+    if bindMatches(BINDS.aimbotToggle, inp) then
         CFG.aimbot=not CFG.aimbot
         fovCircle.Visible=CFG.showFOV and CFG.aimbot
     end
-    if inp.KeyCode==BINDS.misc then
+    if bindMatches(BINDS.misc, inp) then
         miscOn=not miscOn
         CFG.bhop=miscOn; CFG.infJump=miscOn; CFG.noClip=miscOn
     end
